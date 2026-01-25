@@ -59,6 +59,7 @@ async def get_or_create_user(telegram_id: int, username: str = None, first_name:
                 first_name=first_name
             )
             session.add(user)
+            await session.flush()  # Получаем ID пользователя
 
             # Создаем дефолтные настройки напоминаний
             reminder_settings = ReminderSettings(
