@@ -46,19 +46,21 @@ SYSTEM_PROMPT = """Ты помощник студента. Твоя задача
 
 class GPTService:
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url="https://openrouter.ai/api/v1"
+        )
 
     async def parse_note(self, text: str) -> dict:
         """Парсит заметку пользователя и извлекает структурированные данные."""
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="openai/gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": text}
                 ],
-                temperature=0.3,
-                response_format={"type": "json_object"}
+                temperature=0.3
             )
 
             content = response.choices[0].message.content
@@ -94,7 +96,7 @@ class GPTService:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="openai/gpt-4o-mini",
                 messages=[
                     {
                         "role": "system",
