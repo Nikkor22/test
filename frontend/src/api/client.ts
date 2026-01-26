@@ -5,10 +5,12 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 // Получаем telegram_id из Telegram WebApp
 const getTelegramId = (): number => {
   if (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
+    console.log('Telegram user ID:', window.Telegram.WebApp.initDataUnsafe.user.id);
     return window.Telegram.WebApp.initDataUnsafe.user.id;
   }
-  // Для разработки используем тестовый ID
-  return 123456789;
+  // Fallback - твой реальный telegram_id
+  console.log('Using fallback telegram_id');
+  return 7167288809;
 };
 
 const api = axios.create({
