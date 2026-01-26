@@ -96,7 +96,19 @@ async def get_user_by_telegram_id(telegram_id: int, session: AsyncSession) -> Us
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        # Автоматически создаём пользователя если его нет
+        user = User(telegram_id=telegram_id)
+        session.add(user)
+        await session.flush()
+
+        # Создаём настройки напоминаний
+        reminder_settings = ReminderSettings(
+            user_id=user.id,
+            hours_before=[72, 24, 12]
+        )
+        session.add(reminder_settings)
+        await session.commit()
+        await session.refresh(user)
     return user
 
 
