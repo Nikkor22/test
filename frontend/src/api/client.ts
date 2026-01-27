@@ -2,14 +2,10 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// Получаем telegram_id из Telegram WebApp
 const getTelegramId = (): number => {
   if (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
-    console.log('Telegram user ID:', window.Telegram.WebApp.initDataUnsafe.user.id);
     return window.Telegram.WebApp.initDataUnsafe.user.id;
   }
-  // Fallback - твой реальный telegram_id
-  console.log('Using fallback telegram_id');
   return 7167288809;
 };
 
@@ -17,7 +13,6 @@ const api = axios.create({
   baseURL: API_URL,
 });
 
-// Добавляем telegram_id ко всем запросам
 api.interceptors.request.use((config) => {
   const telegramId = getTelegramId();
   config.params = {
@@ -31,8 +26,10 @@ api.interceptors.request.use((config) => {
 export interface Teacher {
   id: number;
   name: string;
+  role: string;
   temperament: string | null;
   preferences: string | null;
+  peculiarities: string | null;
   notes: string | null;
   subject_name: string;
   subject_id: number;
@@ -43,6 +40,7 @@ export interface Deadline {
   title: string;
   work_type: string;
   description: string | null;
+  gpt_description: string | null;
   deadline_date: string;
   is_completed: boolean;
   subject_name: string;
@@ -54,6 +52,42 @@ export interface Subject {
   name: string;
 }
 
+export interface SubjectDetail {
+  id: number;
+  name: string;
+  teachers: Teacher[];
+  summary: string | null;
+}
+
+export interface ScheduleEntry {
+  id: number;
+  subject_id: number;
+  subject_name: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  room: string | null;
+  class_type: string;
+  week_type: string;
+  teacher_name: string | null;
+}
+
+export interface Material {
+  id: number;
+  subject_id: number;
+  subject_name: string;
+  file_name: string;
+  file_type: string;
+  created_at: string;
+}
+
+export interface SubjectSummary {
+  subject_id: number;
+  subject_name: string;
+  summary_text: string | null;
+  generated_at: string | null;
+}
+
 export interface ReminderSettings {
   hours_before: number[];
   is_enabled: boolean;
@@ -63,6 +97,8 @@ export interface ReminderSettings {
 export const teachersApi = {
   getAll: () => api.get<Teacher[]>('/api/teachers'),
   get: (id: number) => api.get<Teacher>(`/api/teachers/${id}`),
+  create: (data: { subject_id: number; name: string; role: string; temperament?: string; preferences?: string; peculiarities?: string; notes?: string }) =>
+    api.post<Teacher>('/api/teachers', data),
   update: (id: number, data: Partial<Teacher>) =>
     api.put<Teacher>(`/api/teachers/${id}`, data),
   delete: (id: number) => api.delete(`/api/teachers/${id}`),
@@ -72,7 +108,7 @@ export const teachersApi = {
 export const deadlinesApi = {
   getAll: (showCompleted = false) =>
     api.get<Deadline[]>('/api/deadlines', { params: { show_completed: showCompleted } }),
-  create: (data: Omit<Deadline, 'id' | 'is_completed' | 'subject_name'>) =>
+  create: (data: { subject_id: number; title: string; work_type: string; description?: string; deadline_date: string }) =>
     api.post<Deadline>('/api/deadlines', data),
   update: (id: number, data: Partial<Deadline>) =>
     api.put<Deadline>(`/api/deadlines/${id}`, data),
@@ -82,8 +118,43 @@ export const deadlinesApi = {
 // Subjects API
 export const subjectsApi = {
   getAll: () => api.get<Subject[]>('/api/subjects'),
+  get: (id: number) => api.get<SubjectDetail>(`/api/subjects/${id}`),
   create: (name: string) => api.post<Subject>('/api/subjects', { name }),
   delete: (id: number) => api.delete(`/api/subjects/${id}`),
+};
+
+// Schedule API
+export const scheduleApi = {
+  getAll: (dayOfWeek?: number, weekType?: string) =>
+    api.get<ScheduleEntry[]>('/api/schedule', {
+      params: { day_of_week: dayOfWeek, week_type: weekType },
+    }),
+  create: (data: { subject_id: number; day_of_week: number; start_time: string; end_time: string; room?: string; class_type?: string; week_type?: string; teacher_name?: string }) =>
+    api.post<ScheduleEntry>('/api/schedule', data),
+  update: (id: number, data: Partial<ScheduleEntry>) =>
+    api.put<ScheduleEntry>(`/api/schedule/${id}`, data),
+  delete: (id: number) => api.delete(`/api/schedule/${id}`),
+};
+
+// Materials API
+export const materialsApi = {
+  getAll: (subjectId?: number) =>
+    api.get<Material[]>('/api/materials', { params: { subject_id: subjectId } }),
+  upload: (subjectId: number, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<Material>('/api/materials/upload', formData, {
+      params: { subject_id: subjectId },
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  delete: (id: number) => api.delete(`/api/materials/${id}`),
+};
+
+// Summary API
+export const summaryApi = {
+  get: (subjectId: number) => api.get<SubjectSummary>(`/api/subjects/${subjectId}/summary`),
+  generate: (subjectId: number) => api.post<SubjectSummary>(`/api/subjects/${subjectId}/summary`),
 };
 
 // Settings API

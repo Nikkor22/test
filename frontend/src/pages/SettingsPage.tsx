@@ -1,24 +1,18 @@
 import { useEffect, useState } from 'react';
-import { settingsApi, subjectsApi, ReminderSettings, Subject } from '../api/client';
+import { settingsApi, ReminderSettings } from '../api/client';
 
 function SettingsPage() {
   const [settings, setSettings] = useState<ReminderSettings>({
     hours_before: [72, 24, 12],
     is_enabled: true,
   });
-  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
-  const [newSubject, setNewSubject] = useState('');
   const [customHours, setCustomHours] = useState('');
 
   const fetchData = async () => {
     try {
-      const [settingsRes, subjectsRes] = await Promise.all([
-        settingsApi.getReminders(),
-        subjectsApi.getAll(),
-      ]);
+      const settingsRes = await settingsApi.getReminders();
       setSettings(settingsRes.data);
-      setSubjects(subjectsRes.data);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -87,43 +81,6 @@ function SettingsPage() {
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
     } catch (error) {
       console.error('Error updating settings:', error);
-    }
-  };
-
-  const addSubject = async () => {
-    if (!newSubject.trim()) return;
-
-    try {
-      await subjectsApi.create(newSubject.trim());
-      setNewSubject('');
-      fetchData();
-      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
-    } catch (error) {
-      console.error('Error adding subject:', error);
-    }
-  };
-
-  const deleteSubject = async (id: number) => {
-    if (window.Telegram?.WebApp) {
-      window.Telegram.WebApp.showConfirm(
-        'Удалить предмет? Это также удалит всех преподавателей и дедлайны по этому предмету.',
-        async (confirmed) => {
-          if (confirmed) {
-            try {
-              await subjectsApi.delete(id);
-              fetchData();
-              window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
-            } catch (error) {
-              console.error('Error deleting subject:', error);
-            }
-          }
-        }
-      );
-    } else {
-      if (confirm('Удалить предмет? Это также удалит всех преподавателей и дедлайны по этому предмету.')) {
-        await subjectsApi.delete(id);
-        fetchData();
-      }
     }
   };
 
@@ -217,61 +174,6 @@ function SettingsPage() {
               })}
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Subjects */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">📚 Предметы</div>
-        </div>
-
-        <div className="card-body">
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-            <input
-              type="text"
-              className="form-input"
-              placeholder="Название предмета"
-              value={newSubject}
-              onChange={(e) => setNewSubject(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addSubject()}
-              style={{ flex: 1 }}
-            />
-            <button className="btn btn-primary" onClick={addSubject}>
-              +
-            </button>
-          </div>
-
-          {subjects.length === 0 ? (
-            <div style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
-              Нет добавленных предметов
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {subjects.map((subject) => (
-                <div
-                  key={subject.id}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '10px 12px',
-                    background: 'var(--bg-secondary)',
-                    borderRadius: 8,
-                  }}
-                >
-                  <span>{subject.name}</span>
-                  <button
-                    className="btn btn-sm btn-danger"
-                    onClick={() => deleteSubject(subject.id)}
-                    style={{ padding: '4px 8px' }}
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
