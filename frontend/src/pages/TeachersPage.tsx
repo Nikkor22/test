@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { teachersApi, Teacher } from '../api/client';
 
 interface TeacherFormData {
@@ -10,6 +11,7 @@ interface TeacherFormData {
 }
 
 function TeachersPage() {
+  const navigate = useNavigate();
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -21,6 +23,11 @@ function TeachersPage() {
     notes: '',
     contact_info: '',
   });
+
+  const openTeacherDetail = (id: number) => {
+    navigate(`/teachers/${id}`);
+    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
+  };
 
   const fetchTeachers = async () => {
     try {
@@ -123,7 +130,11 @@ function TeachersPage() {
       ) : (
         <div className="teachers-list">
           {teachers.map((teacher) => (
-            <div key={teacher.id} className="card teacher-card">
+            <div
+              key={teacher.id}
+              className="card teacher-card clickable"
+              onClick={() => openTeacherDetail(teacher.id)}
+            >
               <div className="card-header">
                 <div className="teacher-main-info">
                   <div className="card-title">
@@ -137,6 +148,7 @@ function TeachersPage() {
                     ))}
                   </div>
                 </div>
+                <span className="chevron">›</span>
               </div>
 
               <div className="card-body">
@@ -179,7 +191,7 @@ function TeachersPage() {
                 )}
               </div>
 
-              <div className="card-footer">
+              <div className="card-footer" onClick={(e) => e.stopPropagation()}>
                 <button className="btn btn-sm btn-secondary" onClick={() => handleEdit(teacher)}>
                   ✏️ Редактировать
                 </button>

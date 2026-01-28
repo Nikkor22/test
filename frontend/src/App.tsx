@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import CalendarPage from './pages/CalendarPage';
 import SubjectsPage from './pages/SubjectsPage';
+import SubjectDetailPage from './pages/SubjectDetailPage';
 import TeachersPage from './pages/TeachersPage';
+import TeacherDetailPage from './pages/TeacherDetailPage';
 import SettingsPage from './pages/SettingsPage';
 
 type Tab = 'calendar' | 'subjects' | 'teachers' | 'settings';
@@ -23,11 +25,11 @@ function App() {
 
   useEffect(() => {
     const path = location.pathname;
-    if (path.includes('subjects')) {
+    if (path.startsWith('/subjects')) {
       setActiveTab('subjects');
-    } else if (path.includes('teachers')) {
+    } else if (path.startsWith('/teachers')) {
       setActiveTab('teachers');
-    } else if (path.includes('settings')) {
+    } else if (path.startsWith('/settings')) {
       setActiveTab('settings');
     } else {
       setActiveTab('calendar');
@@ -55,7 +57,9 @@ function App() {
         <Routes>
           <Route path="/" element={<CalendarPage />} />
           <Route path="/subjects" element={<SubjectsPage />} />
+          <Route path="/subjects/:id" element={<SubjectDetailPage />} />
           <Route path="/teachers" element={<TeachersPage />} />
+          <Route path="/teachers/:id" element={<TeacherDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </div>

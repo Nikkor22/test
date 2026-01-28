@@ -218,6 +218,32 @@ async def get_teachers(
     ]
 
 
+@router.get("/teachers/{teacher_id}", response_model=TeacherResponse)
+async def get_teacher(
+    teacher_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    user = await get_user_by_telegram_id(telegram_id, session)
+    result = await session.execute(
+        select(Teacher)
+        .options(selectinload(Teacher.subject_teachers).selectinload(SubjectTeacher.subject))
+        .where(Teacher.id == teacher_id, Teacher.user_id == user.id)
+    )
+    teacher = result.scalar_one_or_none()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    return TeacherResponse(
+        id=teacher.id, name=teacher.name, temperament=teacher.temperament,
+        preferences=teacher.preferences, notes=teacher.notes, contact_info=teacher.contact_info,
+        subjects=[
+            {"subject_id": st.subject_id, "subject_name": st.subject.name, "role": st.role}
+            for st in teacher.subject_teachers
+        ]
+    )
+
+
 @router.post("/teachers", response_model=TeacherResponse)
 async def create_teacher(
     data: TeacherCreate,
@@ -309,6 +335,31 @@ async def get_subjects(
         )
         for s in subjects
     ]
+
+
+@router.get("/subjects/{subject_id}", response_model=SubjectResponse)
+async def get_subject(
+    subject_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    user = await get_user_by_telegram_id(telegram_id, session)
+    result = await session.execute(
+        select(Subject)
+        .options(selectinload(Subject.subject_teachers).selectinload(SubjectTeacher.teacher))
+        .where(Subject.id == subject_id, Subject.user_id == user.id)
+    )
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    return SubjectResponse(
+        id=subject.id, name=subject.name, description=subject.description, ai_summary=subject.ai_summary,
+        teachers=[
+            {"teacher_id": st.teacher_id, "teacher_name": st.teacher.name, "role": st.role}
+            for st in subject.subject_teachers
+        ]
+    )
 
 
 @router.post("/subjects", response_model=SubjectResponse)

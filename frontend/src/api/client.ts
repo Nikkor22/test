@@ -90,6 +90,7 @@ export interface ReminderSettings {
 // Teachers API
 export const teachersApi = {
   getAll: () => api.get<Teacher[]>('/api/teachers'),
+  getById: (id: number) => api.get<Teacher>(`/api/teachers/${id}`),
   create: (data: Partial<Teacher>) => api.post<Teacher>('/api/teachers', data),
   update: (id: number, data: Partial<Teacher>) => api.put<Teacher>(`/api/teachers/${id}`, data),
   delete: (id: number) => api.delete(`/api/teachers/${id}`),
@@ -98,6 +99,7 @@ export const teachersApi = {
 // Subjects API
 export const subjectsApi = {
   getAll: () => api.get<Subject[]>('/api/subjects'),
+  getById: (id: number) => api.get<Subject>(`/api/subjects/${id}`),
   create: (data: { name: string; description?: string }) => api.post<Subject>('/api/subjects', data),
   delete: (id: number) => api.delete(`/api/subjects/${id}`),
   linkTeacher: (subjectId: number, teacherId: number, role: string) =>

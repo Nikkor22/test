@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { subjectsApi, Subject } from '../api/client';
 
 export default function SubjectsPage() {
+  const navigate = useNavigate();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -36,8 +38,14 @@ export default function SubjectsPage() {
     }
   };
 
-  const toggleExpand = (id: number) => {
+  const toggleExpand = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
     setExpandedId(expandedId === id ? null : id);
+  };
+
+  const openSubjectDetail = (id: number) => {
+    navigate(`/subjects/${id}`);
+    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
   };
 
   if (loading) {
@@ -71,14 +79,22 @@ export default function SubjectsPage() {
 
             return (
               <div key={subject.id} className={`subject-card card ${isExpanded ? 'expanded' : ''}`}>
-                <div className="subject-header" onClick={() => toggleExpand(subject.id)}>
+                <div className="subject-header" onClick={() => openSubjectDetail(subject.id)}>
                   <div className="subject-info">
                     <h3 className="subject-name">{subject.name}</h3>
                     {subject.description && (
                       <p className="subject-description">{subject.description}</p>
                     )}
                   </div>
-                  <span className="expand-icon">{isExpanded ? '▲' : '▼'}</span>
+                  <div className="subject-actions">
+                    <button
+                      className="expand-btn"
+                      onClick={(e) => toggleExpand(subject.id, e)}
+                    >
+                      {isExpanded ? '▲' : '▼'}
+                    </button>
+                    <span className="chevron">›</span>
+                  </div>
                 </div>
 
                 {isExpanded && (

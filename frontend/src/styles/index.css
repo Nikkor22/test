@@ -934,3 +934,416 @@ body {
 .reminder-chip-remove:hover {
   opacity: 1;
 }
+
+/* ═══════════════════════════════════════════════
+   DETAIL PAGES STYLES
+   ═══════════════════════════════════════════════ */
+
+.detail-page {
+  padding-bottom: 20px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.back-btn {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.back-btn:hover {
+  background: var(--bg-card);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.detail-title {
+  font-size: 20px;
+  font-weight: 700;
+  flex: 1;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subject-full-description {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* Teacher link rows */
+.teacher-link-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin: -4px -12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.teacher-link-row:hover {
+  background: var(--bg-secondary);
+}
+
+.teacher-link-row + .teacher-link-row {
+  margin-top: 4px;
+}
+
+.teacher-role-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.teacher-role-badge.lecturer {
+  background: rgba(96, 165, 250, 0.2);
+  color: #60a5fa;
+}
+
+.teacher-role-badge.practitioner {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+.teacher-link-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 15px;
+}
+
+.chevron {
+  color: var(--text-muted);
+  font-size: 18px;
+}
+
+/* Subject link rows */
+.subject-link-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin: -4px -12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.subject-link-row:hover {
+  background: var(--bg-secondary);
+}
+
+.subject-link-row + .subject-link-row {
+  margin-top: 4px;
+}
+
+.subject-link-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.subject-link-name {
+  font-weight: 500;
+  font-size: 15px;
+}
+
+.role-badge {
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.role-badge.lecturer {
+  background: rgba(96, 165, 250, 0.2);
+  color: #60a5fa;
+}
+
+.role-badge.practitioner {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+/* Card badge */
+.card-badge {
+  background: var(--accent-primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Empty mini */
+.empty-mini {
+  text-align: center;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* AI Summary full */
+.ai-summary-full {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+/* Deadline items for detail page */
+.deadline-item {
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.deadline-item.completed {
+  opacity: 0.5;
+}
+
+.deadline-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.deadline-type-badge {
+  background: rgba(124, 58, 237, 0.2);
+  color: var(--accent-secondary);
+  padding: 3px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.deadline-date {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.deadline-item-title {
+  font-weight: 500;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.deadline-item-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: rgba(124, 58, 237, 0.1);
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+/* Completed section */
+.completed-section {
+  margin-top: 12px;
+}
+
+.completed-summary {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+.completed-summary:hover {
+  color: var(--text-secondary);
+}
+
+/* Material items */
+.material-item {
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.material-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.material-type-badge {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  padding: 3px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.material-date {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.material-item-title {
+  font-weight: 500;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.material-item-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.material-item-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: rgba(124, 58, 237, 0.1);
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+/* Notes tabs */
+.notes-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.notes-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.notes-tab:hover {
+  border-color: var(--accent-primary);
+}
+
+.notes-tab.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+}
+
+.notes-tab-count {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.notes-tab.active .notes-tab-count {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Note items */
+.note-item {
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.note-item-text {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.note-item-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+/* Error state */
+.error-state {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.error-text {
+  font-size: 16px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+
+/* Teacher detail page */
+.teacher-contact,
+.teacher-temperament,
+.teacher-preferences,
+.teacher-notes {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* Clickable card */
+.card.clickable {
+  cursor: pointer;
+}
+
+.card.clickable:active {
+  transform: scale(0.98);
+}
+
+/* Subject card actions */
+.subject-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.expand-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.expand-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-primary);
+}
