@@ -6,6 +6,7 @@ interface TeacherFormData {
   temperament: string;
   preferences: string;
   notes: string;
+  contact_info: string;
 }
 
 function TeachersPage() {
@@ -18,6 +19,7 @@ function TeachersPage() {
     temperament: '',
     preferences: '',
     notes: '',
+    contact_info: '',
   });
 
   const fetchTeachers = async () => {
@@ -42,13 +44,13 @@ function TeachersPage() {
       temperament: teacher.temperament || '',
       preferences: teacher.preferences || '',
       notes: teacher.notes || '',
+      contact_info: teacher.contact_info || '',
     });
     setShowModal(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!editingTeacher) return;
 
     try {
@@ -64,23 +66,22 @@ function TeachersPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (window.Telegram?.WebApp) {
-      window.Telegram.WebApp.showConfirm('Удалить этого преподавателя?', async (confirmed) => {
-        if (confirmed) {
-          try {
-            await teachersApi.delete(id);
-            window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
-            fetchTeachers();
-          } catch (error) {
-            console.error('Error deleting teacher:', error);
-          }
-        }
-      });
-    } else {
-      if (confirm('Удалить этого преподавателя?')) {
+    const doDelete = async () => {
+      try {
         await teachersApi.delete(id);
+        window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
         fetchTeachers();
+      } catch (error) {
+        console.error('Error deleting teacher:', error);
       }
+    };
+
+    if (window.Telegram?.WebApp) {
+      window.Telegram.WebApp.showConfirm('Удалить преподавателя?', (confirmed) => {
+        if (confirmed) doDelete();
+      });
+    } else if (confirm('Удалить преподавателя?')) {
+      doDelete();
     }
   };
 
@@ -93,16 +94,20 @@ function TeachersPage() {
     return '🎭';
   };
 
+  const getRoleLabel = (role: string) => {
+    return role === 'lecturer' ? '📖 Лектор' : '✏️ Практикант';
+  };
+
   if (loading) {
     return (
       <div className="loading">
-        <div className="spinner"></div>
+        <div className="spinner" />
       </div>
     );
   }
 
   return (
-    <div>
+    <div className="teachers-page">
       <div className="page-header">
         <h1 className="page-title">Преподаватели</h1>
       </div>
@@ -112,66 +117,79 @@ function TeachersPage() {
           <div className="empty-state-icon">👨‍🏫</div>
           <div className="empty-state-title">Нет преподавателей</div>
           <div className="empty-state-text">
-            Напишите боту заметку о преподавателе,<br />
-            и он появится здесь автоматически
+            Напиши боту заметку о преподавателе или загрузи данные семестра
           </div>
         </div>
       ) : (
-        teachers.map((teacher) => (
-          <div key={teacher.id} className="card">
-            <div className="card-header">
-              <div>
-                <div className="card-title">
-                  {getTemperamentEmoji(teacher.temperament)} {teacher.name}
-                </div>
-                <div className="card-subtitle">
-                  <span className="tag tag-subject">{teacher.subject_name}</span>
+        <div className="teachers-list">
+          {teachers.map((teacher) => (
+            <div key={teacher.id} className="card teacher-card">
+              <div className="card-header">
+                <div className="teacher-main-info">
+                  <div className="card-title">
+                    {getTemperamentEmoji(teacher.temperament)} {teacher.name}
+                  </div>
+                  <div className="teacher-subjects">
+                    {teacher.subjects.map((s, idx) => (
+                      <span key={idx} className="tag tag-subject">
+                        {getRoleLabel(s.role)} {s.subject_name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
+
+              <div className="card-body">
+                {teacher.temperament && (
+                  <div className="info-row">
+                    <span className="info-row-icon">🎭</span>
+                    <span className="info-row-label">Характер:</span>
+                    <span className="info-row-value">{teacher.temperament}</span>
+                  </div>
+                )}
+
+                {teacher.preferences && (
+                  <div className="info-row">
+                    <span className="info-row-icon">💡</span>
+                    <span className="info-row-label">Предпочтения:</span>
+                    <span className="info-row-value">{teacher.preferences}</span>
+                  </div>
+                )}
+
+                {teacher.notes && (
+                  <div className="info-row">
+                    <span className="info-row-icon">📝</span>
+                    <span className="info-row-label">Заметки:</span>
+                    <span className="info-row-value">{teacher.notes}</span>
+                  </div>
+                )}
+
+                {teacher.contact_info && (
+                  <div className="info-row">
+                    <span className="info-row-icon">📞</span>
+                    <span className="info-row-label">Контакты:</span>
+                    <span className="info-row-value">{teacher.contact_info}</span>
+                  </div>
+                )}
+
+                {!teacher.temperament && !teacher.preferences && !teacher.notes && (
+                  <div className="no-info-text">
+                    Нет дополнительной информации
+                  </div>
+                )}
+              </div>
+
+              <div className="card-footer">
+                <button className="btn btn-sm btn-secondary" onClick={() => handleEdit(teacher)}>
+                  ✏️ Редактировать
+                </button>
+                <button className="btn btn-sm btn-danger" onClick={() => handleDelete(teacher.id)}>
+                  🗑️
+                </button>
+              </div>
             </div>
-
-            <div className="card-body">
-              {teacher.temperament && (
-                <div className="info-row">
-                  <span className="info-row-icon">🎭</span>
-                  <span className="info-row-label">Характер:</span>
-                  <span className="info-row-value">{teacher.temperament}</span>
-                </div>
-              )}
-
-              {teacher.preferences && (
-                <div className="info-row">
-                  <span className="info-row-icon">💡</span>
-                  <span className="info-row-label">Предпочтения:</span>
-                  <span className="info-row-value">{teacher.preferences}</span>
-                </div>
-              )}
-
-              {teacher.notes && (
-                <div className="info-row">
-                  <span className="info-row-icon">📝</span>
-                  <span className="info-row-label">Заметки:</span>
-                  <span className="info-row-value">{teacher.notes}</span>
-                </div>
-              )}
-
-              {!teacher.temperament && !teacher.preferences && !teacher.notes && (
-                <div style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                  Нет дополнительной информации. Напишите боту заметку об этом преподавателе.
-                </div>
-              )}
-            </div>
-
-            <div className="card-footer">
-              <button className="btn btn-sm btn-secondary" onClick={() => handleEdit(teacher)}>
-                ✏️ Редактировать
-              </button>
-              <button className="btn btn-sm btn-danger" onClick={() => handleDelete(teacher.id)}>
-                🗑️
-              </button>
-            </div>
-          </div>
-        ))
+          ))}
+        </div>
       )}
 
       {/* Edit Modal */}
@@ -179,45 +197,31 @@ function TeachersPage() {
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 className="modal-title">Редактировать преподавателя</h2>
-              <button className="modal-close" onClick={() => setShowModal(false)}>
-                ×
-              </button>
+              <h2 className="modal-title">Редактировать</h2>
+              <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
             </div>
 
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label">Предмет</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={editingTeacher.subject_name}
-                    disabled
-                    style={{ opacity: 0.6 }}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Имя преподавателя</label>
+                  <label className="form-label">Имя</label>
                   <input
                     type="text"
                     className="form-input"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Иванов И.И."
                     required
                   />
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Характер/темперамент</label>
+                  <label className="form-label">Характер</label>
                   <input
                     type="text"
                     className="form-input"
                     value={formData.temperament}
                     onChange={(e) => setFormData({ ...formData, temperament: e.target.value })}
-                    placeholder="Строгий, требовательный..."
+                    placeholder="Строгий, добрый..."
                   />
                 </div>
 
@@ -227,7 +231,7 @@ function TeachersPage() {
                     className="form-textarea"
                     value={formData.preferences}
                     onChange={(e) => setFormData({ ...formData, preferences: e.target.value })}
-                    placeholder="Что любит спрашивать, на что обращает внимание..."
+                    placeholder="Что спрашивает, на что обращает внимание..."
                   />
                 </div>
 
@@ -238,6 +242,17 @@ function TeachersPage() {
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     placeholder="Дополнительная информация..."
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Контакты</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={formData.contact_info}
+                    onChange={(e) => setFormData({ ...formData, contact_info: e.target.value })}
+                    placeholder="Email, телефон..."
                   />
                 </div>
               </div>

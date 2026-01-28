@@ -25,3 +25,6 @@ python-multipart==0.0.6
 
 # Timezone
 pytz==2024.1
+
+# PDF Processing
+PyMuPDF==1.23.8
