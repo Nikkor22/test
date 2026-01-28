@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import pytz
 
-from app.models import Deadline, Reminder, ReminderSettings, User
+from app.models import Deadline, Reminder, ReminderSettings, Subject, SubjectTeacher
 from app.services.gpt_service import GPTService
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
@@ -17,20 +17,15 @@ class ReminderService:
 
     async def create_reminders_for_deadline(self, deadline: Deadline, user_id: int) -> list[Reminder]:
         """Создает напоминания для дедлайна на основе настроек пользователя."""
-        # Получаем настройки пользователя
         settings_result = await self.session.execute(
             select(ReminderSettings).where(ReminderSettings.user_id == user_id)
         )
         settings = settings_result.scalar_one_or_none()
-
-        # Если настроек нет, используем дефолтные
         hours_before_list = settings.hours_before if settings else [72, 24, 12]
 
         reminders = []
         for hours in hours_before_list:
             send_at = deadline.deadline_date - timedelta(hours=hours)
-
-            # Не создаем напоминание, если время уже прошло
             now = datetime.now(MOSCOW_TZ).replace(tzinfo=None)
             if send_at <= now:
                 continue
@@ -50,7 +45,6 @@ class ReminderService:
     async def get_pending_reminders(self) -> list[Reminder]:
         """Получает все напоминания, которые нужно отправить."""
         now = datetime.now(MOSCOW_TZ).replace(tzinfo=None)
-
         result = await self.session.execute(
             select(Reminder)
             .options(
@@ -71,7 +65,6 @@ class ReminderService:
         """Генерирует текст напоминания с помощью GPT."""
         deadline = reminder.deadline
         subject = deadline.subject
-        teacher = subject.teacher if subject else None
 
         deadline_info = {
             "subject": subject.name if subject else "Неизвестно",
@@ -82,20 +75,24 @@ class ReminderService:
         }
 
         teacher_info = None
-        if teacher:
-            teacher_info = {
-                "name": teacher.name,
-                "temperament": teacher.temperament,
-                "preferences": teacher.preferences,
-                "notes": teacher.notes
-            }
+        if subject:
+            result = await self.session.execute(
+                select(SubjectTeacher)
+                .options(selectinload(SubjectTeacher.teacher))
+                .where(SubjectTeacher.subject_id == subject.id)
+            )
+            st_links = result.scalars().all()
+            if st_links:
+                teacher = st_links[0].teacher
+                teacher_info = {
+                    "name": teacher.name,
+                    "temperament": teacher.temperament,
+                    "preferences": teacher.preferences,
+                    "notes": teacher.notes
+                }
 
-        # Определяем сколько времени осталось
         hours_left = reminder.hours_before
-        if hours_left >= 24:
-            time_left = f"{hours_left // 24} дн."
-        else:
-            time_left = f"{hours_left} ч."
+        time_left = f"{hours_left // 24} дн." if hours_left >= 24 else f"{hours_left} ч."
 
         message = await self.gpt.generate_reminder(deadline_info, teacher_info)
         return f"⏰ Напоминание (осталось {time_left}):\n\n{message}"
@@ -110,10 +107,7 @@ class ReminderService:
         if settings:
             settings.hours_before = hours_before
         else:
-            settings = ReminderSettings(
-                user_id=user_id,
-                hours_before=hours_before
-            )
+            settings = ReminderSettings(user_id=user_id, hours_before=hours_before)
             self.session.add(settings)
 
         await self.session.commit()

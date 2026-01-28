@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { settingsApi, subjectsApi, ReminderSettings, Subject } from '../api/client';
+import { useEffect, useState, useRef } from 'react';
+import { settingsApi, subjectsApi, semesterApi, ReminderSettings, Subject } from '../api/client';
 
 function SettingsPage() {
   const [settings, setSettings] = useState<ReminderSettings>({
@@ -10,6 +10,10 @@ function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [newSubject, setNewSubject] = useState('');
   const [customHours, setCustomHours] = useState('');
+  const [semesterText, setSemesterText] = useState('');
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadingText, setUploadingText] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchData = async () => {
     try {
@@ -124,6 +128,60 @@ function SettingsPage() {
         await subjectsApi.delete(id);
         fetchData();
       }
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['application/json', 'text/plain', 'application/pdf'];
+    const allowedExtensions = ['.json', '.txt', '.pdf'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+
+    if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
+      window.Telegram?.WebApp?.showAlert?.('Поддерживаются только файлы JSON, TXT и PDF');
+      return;
+    }
+
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      await semesterApi.uploadFile(formData);
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+      window.Telegram?.WebApp?.showAlert?.('Данные семестра успешно загружены!');
+      fetchData();
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      window.Telegram?.WebApp?.showAlert?.('Ошибка при загрузке файла');
+    } finally {
+      setUploadingFile(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleTextUpload = async () => {
+    if (!semesterText.trim()) {
+      window.Telegram?.WebApp?.showAlert?.('Введите данные для загрузки');
+      return;
+    }
+
+    setUploadingText(true);
+    try {
+      await semesterApi.uploadText(semesterText.trim());
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+      window.Telegram?.WebApp?.showAlert?.('Данные семестра успешно загружены!');
+      setSemesterText('');
+      fetchData();
+    } catch (error) {
+      console.error('Error uploading text:', error);
+      window.Telegram?.WebApp?.showAlert?.('Ошибка при загрузке данных');
+    } finally {
+      setUploadingText(false);
     }
   };
 
@@ -272,6 +330,70 @@ function SettingsPage() {
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Semester Upload */}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">📂 Загрузка семестра</div>
+        </div>
+
+        <div className="card-body">
+          <p style={{ marginBottom: 16, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Загрузите расписание, материалы и информацию о семестре. Поддерживаются форматы JSON, TXT и PDF.
+          </p>
+
+          {/* File Upload */}
+          <div style={{ marginBottom: 16 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,.txt,.pdf,application/json,text/plain,application/pdf"
+              onChange={handleFileUpload}
+              style={{ display: 'none' }}
+              id="semester-file-input"
+            />
+            <button
+              className="btn btn-secondary"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingFile}
+              style={{ width: '100%' }}
+            >
+              {uploadingFile ? 'Загрузка...' : '📁 Выбрать файл (JSON, TXT, PDF)'}
+            </button>
+          </div>
+
+          {/* Text Upload */}
+          <div style={{ marginBottom: 12 }}>
+            <textarea
+              className="form-input"
+              placeholder="Или вставьте данные семестра сюда (расписание, предметы, преподаватели)..."
+              value={semesterText}
+              onChange={(e) => setSemesterText(e.target.value)}
+              style={{
+                width: '100%',
+                minHeight: 120,
+                resize: 'vertical',
+                fontFamily: 'inherit',
+              }}
+            />
+          </div>
+
+          <button
+            className="btn btn-primary"
+            onClick={handleTextUpload}
+            disabled={uploadingText || !semesterText.trim()}
+            style={{ width: '100%' }}
+          >
+            {uploadingText ? 'Обработка...' : '🚀 Загрузить данные'}
+          </button>
+
+          <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              💡 AI автоматически распознает и структурирует данные: расписание, предметы, преподавателей и материалы.
+            </div>
+          </div>
         </div>
       </div>
 
