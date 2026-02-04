@@ -27,7 +27,7 @@ function SchedulePage() {
     const weekNum = Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));
     return weekNum % 2 === 0 ? 'even' : 'odd';
   });
-  const [currentWeekStart, setCurrentWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [currentWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
 
   const fetchData = async () => {
     try {
