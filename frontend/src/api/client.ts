@@ -93,6 +93,55 @@ export interface ReminderSettings {
   is_enabled: boolean;
 }
 
+export interface TitleTemplate {
+  id: number;
+  name: string;
+  file_name: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface GeneratedWork {
+  id: number;
+  deadline_id: number;
+  deadline_title: string;
+  subject_name: string;
+  work_type: string;
+  work_number: number | null;
+  file_name: string | null;
+  file_type: string;
+  status: 'pending' | 'generating' | 'ready' | 'confirmed' | 'sent';
+  scheduled_send_at: string | null;
+  auto_send: boolean;
+  generated_at: string | null;
+  confirmed_at: string | null;
+  sent_at: string | null;
+  deadline_date: string;
+}
+
+export interface DeadlineWithWork {
+  id: number;
+  title: string;
+  work_type: string;
+  work_number: number | null;
+  description: string | null;
+  gpt_description: string | null;
+  deadline_date: string;
+  is_completed: boolean;
+  subject_name: string;
+  subject_id: number;
+  has_generated_work: boolean;
+  generated_work_status: string | null;
+}
+
+export interface UserWorkSettings {
+  reminder_days_before: number[];
+  auto_generate: boolean;
+  generate_days_before: number;
+  require_confirmation: boolean;
+  default_send_days_before: number;
+}
+
 // Teachers API
 export const teachersApi = {
   getAll: () => api.get<Teacher[]>('/api/teachers'),
@@ -162,6 +211,46 @@ export const settingsApi = {
   getReminders: () => api.get<ReminderSettings>('/api/settings/reminders'),
   updateReminders: (data: Partial<ReminderSettings>) =>
     api.put<ReminderSettings>('/api/settings/reminders', data),
+  getWorkSettings: () => api.get<UserWorkSettings>('/api/settings/work'),
+  updateWorkSettings: (data: Partial<UserWorkSettings>) =>
+    api.put<UserWorkSettings>('/api/settings/work', data),
+};
+
+// Title Templates API
+export const templatesApi = {
+  getAll: () => api.get<TitleTemplate[]>('/api/title-templates'),
+  upload: (name: string, file: File, isDefault = false) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<TitleTemplate>('/api/title-templates', formData, {
+      params: { name, is_default: isDefault },
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  setDefault: (id: number) => api.put(`/api/title-templates/${id}/set-default`),
+  delete: (id: number) => api.delete(`/api/title-templates/${id}`),
+};
+
+// Generated Works API
+export const worksApi = {
+  getAll: (status?: string) =>
+    api.get<GeneratedWork[]>('/api/generated-works', { params: { status } }),
+  get: (id: number) => api.get<GeneratedWork>(`/api/generated-works/${id}`),
+  create: (data: { deadline_id: number; title_template_id?: number; scheduled_send_at?: string; auto_send?: boolean }) =>
+    api.post<GeneratedWork>('/api/generated-works', data),
+  generate: (id: number) => api.post(`/api/generated-works/${id}/generate`),
+  confirm: (id: number) => api.post(`/api/generated-works/${id}/confirm`),
+  update: (id: number, data: { scheduled_send_at?: string; auto_send?: boolean }) =>
+    api.put<GeneratedWork>(`/api/generated-works/${id}`, data),
+  delete: (id: number) => api.delete(`/api/generated-works/${id}`),
+};
+
+// Deadlines with Works API
+export const deadlinesWithWorksApi = {
+  getAll: (showCompleted = false) =>
+    api.get<DeadlineWithWork[]>('/api/deadlines-with-works', { params: { show_completed: showCompleted } }),
+  create: (data: { subject_id: number; title: string; work_type: string; work_number?: number; description?: string; deadline_date: string }) =>
+    api.post<DeadlineWithWork>('/api/deadlines-with-work', data),
 };
 
 export default api;

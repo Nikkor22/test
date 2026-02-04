@@ -13,6 +13,7 @@ from app.models import User, Reminder, Deadline, Subject, ReminderSettings
 from app.routers import router
 from app.bot import bot, dp
 from app.services.reminder_service import ReminderService
+from app.services.work_scheduler import WorkSchedulerService
 
 settings = get_settings()
 scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
@@ -62,6 +63,33 @@ async def check_and_send_reminders():
                 print(f"Error sending reminder: {e}")
 
 
+async def check_and_generate_works():
+    """Проверяет и генерирует работы автоматически."""
+    print("Checking works to generate...")
+
+    async with async_session() as session:
+        work_scheduler = WorkSchedulerService(session, bot)
+        await work_scheduler.check_and_generate_works()
+
+
+async def check_and_send_works():
+    """Проверяет и отправляет готовые работы."""
+    print("Checking works to send...")
+
+    async with async_session() as session:
+        work_scheduler = WorkSchedulerService(session, bot)
+        await work_scheduler.check_and_send_works()
+
+
+async def send_work_reminders():
+    """Отправляет напоминания о работах."""
+    print("Sending work reminders...")
+
+    async with async_session() as session:
+        work_scheduler = WorkSchedulerService(session, bot)
+        await work_scheduler.send_work_reminders()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager для FastAPI."""
@@ -79,6 +107,31 @@ async def lifespan(app: FastAPI):
         id="reminder_checker",
         replace_existing=True
     )
+
+    # Планировщик генерации работ (каждые 30 минут)
+    scheduler.add_job(
+        check_and_generate_works,
+        trigger=IntervalTrigger(minutes=30),
+        id="work_generator",
+        replace_existing=True
+    )
+
+    # Планировщик отправки готовых работ (каждые 15 минут)
+    scheduler.add_job(
+        check_and_send_works,
+        trigger=IntervalTrigger(minutes=15),
+        id="work_sender",
+        replace_existing=True
+    )
+
+    # Напоминания о работах (каждый час)
+    scheduler.add_job(
+        send_work_reminders,
+        trigger=IntervalTrigger(hours=1),
+        id="work_reminder",
+        replace_existing=True
+    )
+
     scheduler.start()
     print("Scheduler started")
 

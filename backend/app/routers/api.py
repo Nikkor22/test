@@ -11,7 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.models.base import get_session
 from app.models import (
     User, Subject, Teacher, ScheduleEntry, Deadline,
-    Note, Material, SubjectSummary, ReminderSettings
+    Note, Material, SubjectSummary, ReminderSettings,
+    TitleTemplate, GeneratedWork, UserWorkSettings
 )
 from app.services.reminder_service import ReminderService
 from app.services.gpt_service import GPTService
@@ -180,6 +181,109 @@ class ReminderSettingsResponse(BaseModel):
 class ReminderSettingsUpdate(BaseModel):
     hours_before: Optional[List[int]] = None
     is_enabled: Optional[bool] = None
+
+
+# === Title Templates ===
+
+class TitleTemplateResponse(BaseModel):
+    id: int
+    name: str
+    file_name: str
+    is_default: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TitleTemplateCreate(BaseModel):
+    name: str
+    is_default: bool = False
+
+
+# === Generated Works ===
+
+class GeneratedWorkResponse(BaseModel):
+    id: int
+    deadline_id: int
+    deadline_title: str
+    subject_name: str
+    work_type: str
+    work_number: Optional[int] = None
+    file_name: Optional[str] = None
+    file_type: str
+    status: str  # pending, generating, ready, confirmed, sent
+    scheduled_send_at: Optional[datetime] = None
+    auto_send: bool
+    generated_at: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None
+    deadline_date: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class GeneratedWorkCreate(BaseModel):
+    deadline_id: int
+    title_template_id: Optional[int] = None
+    scheduled_send_at: Optional[datetime] = None
+    auto_send: bool = False
+
+
+class GeneratedWorkUpdate(BaseModel):
+    scheduled_send_at: Optional[datetime] = None
+    auto_send: Optional[bool] = None
+
+
+# === User Work Settings ===
+
+class UserWorkSettingsResponse(BaseModel):
+    reminder_days_before: List[int]
+    auto_generate: bool
+    generate_days_before: int
+    require_confirmation: bool
+    default_send_days_before: int
+
+    class Config:
+        from_attributes = True
+
+
+class UserWorkSettingsUpdate(BaseModel):
+    reminder_days_before: Optional[List[int]] = None
+    auto_generate: Optional[bool] = None
+    generate_days_before: Optional[int] = None
+    require_confirmation: Optional[bool] = None
+    default_send_days_before: Optional[int] = None
+
+
+# === Deadline with work_number ===
+
+class DeadlineWithWorkResponse(BaseModel):
+    id: int
+    title: str
+    work_type: str
+    work_number: Optional[int] = None
+    description: Optional[str] = None
+    gpt_description: Optional[str] = None
+    deadline_date: datetime
+    is_completed: bool
+    subject_name: str
+    subject_id: int
+    has_generated_work: bool = False
+    generated_work_status: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DeadlineCreateWithWork(BaseModel):
+    subject_id: int
+    title: str
+    work_type: str
+    work_number: Optional[int] = None
+    description: Optional[str] = None
+    deadline_date: datetime
 
 
 # ============= Helpers =============
@@ -939,4 +1043,713 @@ async def update_reminder_settings(
     await session.refresh(settings)
     return ReminderSettingsResponse(
         hours_before=settings.hours_before, is_enabled=settings.is_enabled
+    )
+
+
+# ============= Title Templates =============
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
+os.makedirs(TEMPLATES_DIR, exist_ok=True)
+
+
+@router.get("/title-templates", response_model=List[TitleTemplateResponse])
+async def get_title_templates(
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Получить все шаблоны титульных листов пользователя"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+    result = await session.execute(
+        select(TitleTemplate)
+        .where(TitleTemplate.user_id == user.id)
+        .order_by(TitleTemplate.is_default.desc(), TitleTemplate.created_at.desc())
+    )
+    templates = result.scalars().all()
+    return [
+        TitleTemplateResponse(
+            id=t.id, name=t.name, file_name=t.file_name,
+            is_default=t.is_default, created_at=t.created_at
+        )
+        for t in templates
+    ]
+
+
+@router.post("/title-templates", response_model=TitleTemplateResponse)
+async def upload_title_template(
+    name: str = Query(...),
+    is_default: bool = Query(False),
+    telegram_id: int = Query(...),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Загрузить новый шаблон титульного листа (DOCX).
+    Поддерживаемые плейсхолдеры: {{subject_name}}, {{date}}, {{work_type}}, {{work_number}}, {{student_name}}, {{group_number}}
+    """
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    # Validate file type
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only DOCX files are supported for title templates")
+
+    # If setting as default, unset other defaults
+    if is_default:
+        await session.execute(
+            select(TitleTemplate)
+            .where(TitleTemplate.user_id == user.id, TitleTemplate.is_default == True)
+        )
+        existing_defaults = (await session.execute(
+            select(TitleTemplate).where(TitleTemplate.user_id == user.id, TitleTemplate.is_default == True)
+        )).scalars().all()
+        for t in existing_defaults:
+            t.is_default = False
+
+    # Save file
+    file_path = os.path.join(TEMPLATES_DIR, f"{user.id}_{datetime.utcnow().timestamp()}_{file.filename}")
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    template = TitleTemplate(
+        user_id=user.id,
+        name=name,
+        file_name=file.filename,
+        file_path=file_path,
+        is_default=is_default
+    )
+    session.add(template)
+    await session.commit()
+    await session.refresh(template)
+
+    return TitleTemplateResponse(
+        id=template.id, name=template.name, file_name=template.file_name,
+        is_default=template.is_default, created_at=template.created_at
+    )
+
+
+@router.put("/title-templates/{template_id}/set-default")
+async def set_default_template(
+    template_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Установить шаблон как шаблон по умолчанию"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    # Get the template
+    result = await session.execute(
+        select(TitleTemplate).where(TitleTemplate.id == template_id, TitleTemplate.user_id == user.id)
+    )
+    template = result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    # Unset other defaults
+    existing_defaults = (await session.execute(
+        select(TitleTemplate).where(TitleTemplate.user_id == user.id, TitleTemplate.is_default == True)
+    )).scalars().all()
+    for t in existing_defaults:
+        t.is_default = False
+
+    template.is_default = True
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/title-templates/{template_id}")
+async def delete_title_template(
+    template_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Удалить шаблон титульного листа"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+    result = await session.execute(
+        select(TitleTemplate).where(TitleTemplate.id == template_id, TitleTemplate.user_id == user.id)
+    )
+    template = result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    # Delete file
+    if template.file_path and os.path.exists(template.file_path):
+        os.remove(template.file_path)
+
+    await session.delete(template)
+    await session.commit()
+    return {"status": "ok"}
+
+
+# ============= Generated Works =============
+
+GENERATED_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated")
+os.makedirs(GENERATED_DIR, exist_ok=True)
+
+
+@router.get("/generated-works", response_model=List[GeneratedWorkResponse])
+async def get_generated_works(
+    telegram_id: int = Query(...),
+    status: Optional[str] = Query(None),
+    session: AsyncSession = Depends(get_session)
+):
+    """Получить все сгенерированные работы пользователя"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    query = (
+        select(GeneratedWork)
+        .join(Deadline)
+        .join(Subject)
+        .options(selectinload(GeneratedWork.deadline).selectinload(Deadline.subject))
+        .where(Subject.user_id == user.id)
+        .order_by(Deadline.deadline_date)
+    )
+
+    if status:
+        query = query.where(GeneratedWork.status == status)
+
+    result = await session.execute(query)
+    works = result.scalars().all()
+
+    return [
+        GeneratedWorkResponse(
+            id=w.id,
+            deadline_id=w.deadline_id,
+            deadline_title=w.deadline.title,
+            subject_name=w.deadline.subject.name,
+            work_type=w.deadline.work_type,
+            work_number=w.deadline.work_number,
+            file_name=w.file_name,
+            file_type=w.file_type,
+            status=w.status,
+            scheduled_send_at=w.scheduled_send_at,
+            auto_send=w.auto_send,
+            generated_at=w.generated_at,
+            confirmed_at=w.confirmed_at,
+            sent_at=w.sent_at,
+            deadline_date=w.deadline.deadline_date
+        )
+        for w in works
+    ]
+
+
+@router.get("/generated-works/{work_id}", response_model=GeneratedWorkResponse)
+async def get_generated_work(
+    work_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Получить информацию о конкретной сгенерированной работе"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    result = await session.execute(
+        select(GeneratedWork)
+        .join(Deadline)
+        .join(Subject)
+        .options(selectinload(GeneratedWork.deadline).selectinload(Deadline.subject))
+        .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+    )
+    work = result.scalar_one_or_none()
+    if not work:
+        raise HTTPException(status_code=404, detail="Generated work not found")
+
+    return GeneratedWorkResponse(
+        id=work.id,
+        deadline_id=work.deadline_id,
+        deadline_title=work.deadline.title,
+        subject_name=work.deadline.subject.name,
+        work_type=work.deadline.work_type,
+        work_number=work.deadline.work_number,
+        file_name=work.file_name,
+        file_type=work.file_type,
+        status=work.status,
+        scheduled_send_at=work.scheduled_send_at,
+        auto_send=work.auto_send,
+        generated_at=work.generated_at,
+        confirmed_at=work.confirmed_at,
+        sent_at=work.sent_at,
+        deadline_date=work.deadline.deadline_date
+    )
+
+
+@router.post("/generated-works", response_model=GeneratedWorkResponse)
+async def create_generated_work(
+    data: GeneratedWorkCreate,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Создать запись для генерации работы (статус pending)"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    # Validate deadline ownership
+    result = await session.execute(
+        select(Deadline)
+        .join(Subject)
+        .options(selectinload(Deadline.subject))
+        .where(Deadline.id == data.deadline_id, Subject.user_id == user.id)
+    )
+    deadline = result.scalar_one_or_none()
+    if not deadline:
+        raise HTTPException(status_code=404, detail="Deadline not found")
+
+    # Check if work already exists
+    existing = await session.execute(
+        select(GeneratedWork).where(GeneratedWork.deadline_id == data.deadline_id)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Work for this deadline already exists")
+
+    # Validate template if provided
+    if data.title_template_id:
+        template_result = await session.execute(
+            select(TitleTemplate).where(
+                TitleTemplate.id == data.title_template_id,
+                TitleTemplate.user_id == user.id
+            )
+        )
+        if not template_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Title template not found")
+
+    work = GeneratedWork(
+        deadline_id=data.deadline_id,
+        title_template_id=data.title_template_id,
+        scheduled_send_at=data.scheduled_send_at,
+        auto_send=data.auto_send,
+        status="pending"
+    )
+    session.add(work)
+    await session.commit()
+    await session.refresh(work)
+
+    return GeneratedWorkResponse(
+        id=work.id,
+        deadline_id=work.deadline_id,
+        deadline_title=deadline.title,
+        subject_name=deadline.subject.name,
+        work_type=deadline.work_type,
+        work_number=deadline.work_number,
+        file_name=work.file_name,
+        file_type=work.file_type,
+        status=work.status,
+        scheduled_send_at=work.scheduled_send_at,
+        auto_send=work.auto_send,
+        generated_at=work.generated_at,
+        confirmed_at=work.confirmed_at,
+        sent_at=work.sent_at,
+        deadline_date=deadline.deadline_date
+    )
+
+
+@router.post("/generated-works/{work_id}/generate")
+async def generate_work_content(
+    work_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Запустить генерацию содержимого работы через AI"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    result = await session.execute(
+        select(GeneratedWork)
+        .join(Deadline)
+        .join(Subject)
+        .options(
+            selectinload(GeneratedWork.deadline).selectinload(Deadline.subject).selectinload(Subject.materials),
+            selectinload(GeneratedWork.title_template)
+        )
+        .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+    )
+    work = result.scalar_one_or_none()
+    if not work:
+        raise HTTPException(status_code=404, detail="Generated work not found")
+
+    if work.status not in ("pending", "ready"):
+        raise HTTPException(status_code=400, detail=f"Cannot generate work with status '{work.status}'")
+
+    # Update status
+    work.status = "generating"
+    await session.commit()
+
+    try:
+        # Collect materials for AI
+        materials_text = []
+        for material in work.deadline.subject.materials:
+            if material.parsed_text:
+                materials_text.append(f"=== {material.file_name} ===\n{material.parsed_text}")
+
+        # Generate content using GPT
+        from app.services.work_generator import WorkGeneratorService
+        generator = WorkGeneratorService(gpt_service)
+
+        content = await generator.generate_work_content(
+            subject_name=work.deadline.subject.name,
+            work_type=work.deadline.work_type,
+            work_number=work.deadline.work_number,
+            title=work.deadline.title,
+            description=work.deadline.description,
+            materials=materials_text
+        )
+
+        # Get default template if not set
+        template = work.title_template
+        if not template:
+            template_result = await session.execute(
+                select(TitleTemplate).where(
+                    TitleTemplate.user_id == user.id,
+                    TitleTemplate.is_default == True
+                )
+            )
+            template = template_result.scalar_one_or_none()
+
+        # Generate document
+        file_name, file_path = await generator.create_document(
+            content=content,
+            subject_name=work.deadline.subject.name,
+            work_type=work.deadline.work_type,
+            work_number=work.deadline.work_number,
+            student_name=user.first_name or "Студент",
+            group_number=user.group_number or "",
+            template_path=template.file_path if template else None,
+            output_dir=GENERATED_DIR,
+            user_id=user.id,
+            deadline_id=work.deadline_id
+        )
+
+        work.content_text = content
+        work.file_name = file_name
+        work.file_path = file_path
+        work.status = "ready"
+        work.generated_at = datetime.utcnow()
+
+        await session.commit()
+        return {"status": "ok", "file_name": file_name}
+
+    except Exception as e:
+        work.status = "pending"  # Reset status on error
+        await session.commit()
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+
+
+@router.post("/generated-works/{work_id}/confirm")
+async def confirm_work_sending(
+    work_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Подтвердить отправку работы (после этого работа будет отправлена)"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    result = await session.execute(
+        select(GeneratedWork)
+        .join(Deadline)
+        .join(Subject)
+        .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+    )
+    work = result.scalar_one_or_none()
+    if not work:
+        raise HTTPException(status_code=404, detail="Generated work not found")
+
+    if work.status != "ready":
+        raise HTTPException(status_code=400, detail="Work is not ready for confirmation")
+
+    work.status = "confirmed"
+    work.confirmed_at = datetime.utcnow()
+    await session.commit()
+
+    return {"status": "ok"}
+
+
+@router.put("/generated-works/{work_id}", response_model=GeneratedWorkResponse)
+async def update_generated_work(
+    work_id: int,
+    data: GeneratedWorkUpdate,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Обновить настройки сгенерированной работы"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    result = await session.execute(
+        select(GeneratedWork)
+        .join(Deadline)
+        .join(Subject)
+        .options(selectinload(GeneratedWork.deadline).selectinload(Deadline.subject))
+        .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+    )
+    work = result.scalar_one_or_none()
+    if not work:
+        raise HTTPException(status_code=404, detail="Generated work not found")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(work, key, value)
+
+    await session.commit()
+    await session.refresh(work)
+
+    return GeneratedWorkResponse(
+        id=work.id,
+        deadline_id=work.deadline_id,
+        deadline_title=work.deadline.title,
+        subject_name=work.deadline.subject.name,
+        work_type=work.deadline.work_type,
+        work_number=work.deadline.work_number,
+        file_name=work.file_name,
+        file_type=work.file_type,
+        status=work.status,
+        scheduled_send_at=work.scheduled_send_at,
+        auto_send=work.auto_send,
+        generated_at=work.generated_at,
+        confirmed_at=work.confirmed_at,
+        sent_at=work.sent_at,
+        deadline_date=work.deadline.deadline_date
+    )
+
+
+@router.delete("/generated-works/{work_id}")
+async def delete_generated_work(
+    work_id: int,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Удалить сгенерированную работу"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    result = await session.execute(
+        select(GeneratedWork)
+        .join(Deadline)
+        .join(Subject)
+        .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+    )
+    work = result.scalar_one_or_none()
+    if not work:
+        raise HTTPException(status_code=404, detail="Generated work not found")
+
+    # Delete file
+    if work.file_path and os.path.exists(work.file_path):
+        os.remove(work.file_path)
+
+    await session.delete(work)
+    await session.commit()
+    return {"status": "ok"}
+
+
+# ============= User Work Settings =============
+
+@router.get("/settings/work", response_model=UserWorkSettingsResponse)
+async def get_work_settings(
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Получить настройки автоматической генерации работ"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+    result = await session.execute(
+        select(UserWorkSettings).where(UserWorkSettings.user_id == user.id)
+    )
+    settings = result.scalar_one_or_none()
+
+    if not settings:
+        return UserWorkSettingsResponse(
+            reminder_days_before=[3, 1],
+            auto_generate=True,
+            generate_days_before=5,
+            require_confirmation=True,
+            default_send_days_before=1
+        )
+
+    return UserWorkSettingsResponse(
+        reminder_days_before=settings.reminder_days_before,
+        auto_generate=settings.auto_generate,
+        generate_days_before=settings.generate_days_before,
+        require_confirmation=settings.require_confirmation,
+        default_send_days_before=settings.default_send_days_before
+    )
+
+
+@router.put("/settings/work", response_model=UserWorkSettingsResponse)
+async def update_work_settings(
+    data: UserWorkSettingsUpdate,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Обновить настройки автоматической генерации работ"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+    result = await session.execute(
+        select(UserWorkSettings).where(UserWorkSettings.user_id == user.id)
+    )
+    settings = result.scalar_one_or_none()
+
+    if not settings:
+        settings = UserWorkSettings(
+            user_id=user.id,
+            reminder_days_before=data.reminder_days_before or [3, 1],
+            auto_generate=data.auto_generate if data.auto_generate is not None else True,
+            generate_days_before=data.generate_days_before or 5,
+            require_confirmation=data.require_confirmation if data.require_confirmation is not None else True,
+            default_send_days_before=data.default_send_days_before or 1
+        )
+        session.add(settings)
+    else:
+        update_data = data.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(settings, key, value)
+
+    await session.commit()
+    await session.refresh(settings)
+
+    return UserWorkSettingsResponse(
+        reminder_days_before=settings.reminder_days_before,
+        auto_generate=settings.auto_generate,
+        generate_days_before=settings.generate_days_before,
+        require_confirmation=settings.require_confirmation,
+        default_send_days_before=settings.default_send_days_before
+    )
+
+
+# ============= Deadlines with Generated Works Info =============
+
+@router.get("/deadlines-with-works", response_model=List[DeadlineWithWorkResponse])
+async def get_deadlines_with_works(
+    telegram_id: int = Query(...),
+    show_completed: bool = Query(False),
+    session: AsyncSession = Depends(get_session)
+):
+    """Получить дедлайны с информацией о сгенерированных работах"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    query = (
+        select(Deadline)
+        .join(Subject)
+        .options(
+            selectinload(Deadline.subject),
+            selectinload(Deadline.generated_work)
+        )
+        .where(Subject.user_id == user.id)
+        .order_by(Deadline.deadline_date)
+    )
+
+    if not show_completed:
+        query = query.where(Deadline.is_completed == False)
+
+    result = await session.execute(query)
+    deadlines = result.scalars().all()
+
+    return [
+        DeadlineWithWorkResponse(
+            id=d.id,
+            title=d.title,
+            work_type=d.work_type,
+            work_number=d.work_number,
+            description=d.description,
+            gpt_description=d.gpt_description,
+            deadline_date=d.deadline_date,
+            is_completed=d.is_completed,
+            subject_name=d.subject.name,
+            subject_id=d.subject_id,
+            has_generated_work=d.generated_work is not None,
+            generated_work_status=d.generated_work.status if d.generated_work else None
+        )
+        for d in deadlines
+    ]
+
+
+@router.post("/deadlines-with-work", response_model=DeadlineWithWorkResponse)
+async def create_deadline_with_work(
+    data: DeadlineCreateWithWork,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Создать дедлайн с автоматическим созданием записи для генерации работы"""
+    user = await get_user_by_telegram_id(telegram_id, session)
+
+    # Validate subject
+    result = await session.execute(
+        select(Subject).where(Subject.id == data.subject_id, Subject.user_id == user.id)
+    )
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    # Create deadline
+    deadline = Deadline(
+        subject_id=data.subject_id,
+        title=data.title,
+        work_type=data.work_type,
+        work_number=data.work_number,
+        description=data.description,
+        deadline_date=data.deadline_date
+    )
+    session.add(deadline)
+    await session.flush()
+
+    # Generate GPT description
+    try:
+        teachers_result = await session.execute(
+            select(Teacher).where(Teacher.subject_id == subject.id)
+        )
+        teachers = teachers_result.scalars().all()
+        teacher_info = None
+        if teachers:
+            t = teachers[0]
+            teacher_info = {
+                "name": t.name, "role": t.role,
+                "temperament": t.temperament, "preferences": t.preferences,
+                "peculiarities": t.peculiarities
+            }
+
+        gpt_desc = await gpt_service.generate_deadline_description(
+            {"subject": subject.name, "title": data.title,
+             "work_type": data.work_type, "description": data.description or "",
+             "deadline_date": data.deadline_date.strftime("%d.%m.%Y %H:%M")},
+            teacher_info
+        )
+        if gpt_desc:
+            deadline.gpt_description = gpt_desc
+    except Exception as e:
+        print(f"Error generating GPT description: {e}")
+
+    # Create reminders
+    reminder_service = ReminderService(session)
+    await reminder_service.create_reminders_for_deadline(deadline, user.id)
+
+    # Get user work settings
+    settings_result = await session.execute(
+        select(UserWorkSettings).where(UserWorkSettings.user_id == user.id)
+    )
+    work_settings = settings_result.scalar_one_or_none()
+
+    # Get default template
+    template_result = await session.execute(
+        select(TitleTemplate).where(TitleTemplate.user_id == user.id, TitleTemplate.is_default == True)
+    )
+    default_template = template_result.scalar_one_or_none()
+
+    # Create generated work entry
+    from datetime import timedelta
+    send_days_before = work_settings.default_send_days_before if work_settings else 1
+    scheduled_send_at = data.deadline_date - timedelta(days=send_days_before)
+
+    generated_work = GeneratedWork(
+        deadline_id=deadline.id,
+        title_template_id=default_template.id if default_template else None,
+        scheduled_send_at=scheduled_send_at,
+        auto_send=not (work_settings.require_confirmation if work_settings else True),
+        status="pending"
+    )
+    session.add(generated_work)
+
+    await session.commit()
+    await session.refresh(deadline)
+
+    return DeadlineWithWorkResponse(
+        id=deadline.id,
+        title=deadline.title,
+        work_type=deadline.work_type,
+        work_number=deadline.work_number,
+        description=deadline.description,
+        gpt_description=deadline.gpt_description,
+        deadline_date=deadline.deadline_date,
+        is_completed=deadline.is_completed,
+        subject_name=subject.name,
+        subject_id=deadline.subject_id,
+        has_generated_work=True,
+        generated_work_status="pending"
     )

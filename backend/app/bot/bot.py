@@ -9,9 +9,13 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.models.base import async_session
-from app.models import User, Subject, Teacher, Deadline, Note, Material, ReminderSettings
+from app.models import (
+    User, Subject, Teacher, Deadline, Note, Material, ReminderSettings,
+    TitleTemplate, GeneratedWork, UserWorkSettings
+)
 from app.services.gpt_service import GPTService
 from app.services.reminder_service import ReminderService
+from app.services.work_generator import WorkGeneratorService
 
 import os
 import io
@@ -23,7 +27,11 @@ dp = Dispatcher()
 gpt_service = GPTService()
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
+GENERATED_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(TEMPLATES_DIR, exist_ok=True)
+os.makedirs(GENERATED_DIR, exist_ok=True)
 
 
 class AddTeacherStates(StatesGroup):
@@ -39,6 +47,28 @@ class ReminderSettingsStates(StatesGroup):
 class UploadMaterialStates(StatesGroup):
     waiting_for_subject = State()
     waiting_for_file = State()
+
+
+class UploadTemplateStates(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_file = State()
+
+
+class GenerateWorkStates(StatesGroup):
+    waiting_for_deadline = State()
+
+
+WORK_TYPE_NAMES = {
+    "homework": "Домашняя работа",
+    "lab": "Лабораторная работа",
+    "practical": "Практическая работа",
+    "coursework": "Курсовая работа",
+    "report": "Реферат",
+    "essay": "Эссе",
+    "presentation": "Презентация",
+    "exam": "Экзамен",
+    "test": "Контрольная работа",
+}
 
 
 def get_main_keyboard():
@@ -130,13 +160,19 @@ async def cmd_help(message: Message):
     """Обработчик команды /help."""
     await message.answer(
         "📖 **Справка**\n\n"
-        "**Команды:**\n"
+        "**Основные команды:**\n"
         "/start - Начало работы\n"
         "/teachers - Список преподавателей\n"
         "/deadlines - Список дедлайнов\n"
         "/add\\_teacher - Добавить преподавателя\n"
         "/upload - Загрузить материал\n"
         "/settings - Настройки напоминаний\n\n"
+        "**Работы и генерация:**\n"
+        "/works - Список сгенерированных работ\n"
+        "/generate - Сгенерировать работу вручную\n"
+        "/templates - Шаблоны титульных листов\n"
+        "/upload\\_template - Загрузить шаблон титульника\n"
+        "/work\\_settings - Настройки автогенерации\n\n"
         "**Заметки:**\n"
         "Просто пиши мне сообщения с информацией о преподавателях или дедлайнах.\n"
         "Я автоматически распознаю и сохраню данные.\n\n"
@@ -499,6 +535,520 @@ async def callback_upload_material(callback: CallbackQuery, state: FSMContext):
     """Обработчик кнопки загрузки материала."""
     await callback.answer()
     await cmd_upload(callback.message, state)
+
+
+# ============= GENERATED WORKS HANDLERS =============
+
+@dp.message(Command("works"))
+async def cmd_works(message: Message):
+    """Показывает список сгенерированных работ."""
+    user = await get_or_create_user(message.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(GeneratedWork)
+            .join(Deadline)
+            .join(Subject)
+            .options(
+                selectinload(GeneratedWork.deadline).selectinload(Deadline.subject)
+            )
+            .where(Subject.user_id == user.id)
+            .order_by(Deadline.deadline_date)
+        )
+        works = result.scalars().all()
+
+    if not works:
+        await message.answer(
+            "📋 У тебя пока нет работ для генерации.\n\n"
+            "Добавь дедлайн с типом работы (лабораторная, практическая и т.д.), "
+            "и система автоматически подготовит работу к сроку сдачи!",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    text = "📋 **Твои работы:**\n\n"
+    for work in works:
+        status_emoji = {
+            "pending": "⏳",
+            "generating": "🔄",
+            "ready": "✅",
+            "confirmed": "📤",
+            "sent": "✅"
+        }.get(work.status, "❓")
+
+        status_text = {
+            "pending": "ожидает генерации",
+            "generating": "генерируется",
+            "ready": "готова",
+            "confirmed": "подтверждена",
+            "sent": "отправлена"
+        }.get(work.status, work.status)
+
+        work_type_name = WORK_TYPE_NAMES.get(work.deadline.work_type, work.deadline.work_type)
+        work_title = work_type_name
+        if work.deadline.work_number:
+            work_title += f" №{work.deadline.work_number}"
+
+        text += f"{status_emoji} **{work_title}**\n"
+        text += f"   📚 {work.deadline.subject.name}\n"
+        text += f"   📝 {work.deadline.title}\n"
+        text += f"   📅 Дедлайн: {work.deadline.deadline_date.strftime('%d.%m.%Y')}\n"
+        text += f"   📊 Статус: {status_text}\n"
+
+        if work.status == "ready":
+            text += f"   ⚡ /download\\_{work.id} — скачать\n"
+            text += f"   ✅ /confirm\\_{work.id} — подтвердить отправку\n"
+
+        text += "\n"
+
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+
+@dp.message(Command("generate"))
+async def cmd_generate(message: Message, state: FSMContext):
+    """Вручную запустить генерацию работы."""
+    user = await get_or_create_user(message.from_user.id)
+
+    async with async_session() as session:
+        # Get deadlines with pending works
+        result = await session.execute(
+            select(Deadline)
+            .join(Subject)
+            .options(
+                selectinload(Deadline.subject),
+                selectinload(Deadline.generated_work)
+            )
+            .where(Subject.user_id == user.id)
+            .where(Deadline.is_completed == False)
+            .order_by(Deadline.deadline_date)
+        )
+        deadlines = result.scalars().all()
+
+    # Filter to deadlines with pending works
+    pending_deadlines = [d for d in deadlines if d.generated_work and d.generated_work.status == "pending"]
+
+    if not pending_deadlines:
+        await message.answer(
+            "Нет работ, ожидающих генерации.\n"
+            "Добавь дедлайн с типом работы через приложение или заметку!",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"{WORK_TYPE_NAMES.get(d.work_type, d.work_type)} - {d.title[:20]}",
+            callback_data=f"gen_work:{d.id}"
+        )]
+        for d in pending_deadlines[:10]  # Limit to 10
+    ])
+
+    await message.answer(
+        "Выбери работу для генерации:",
+        reply_markup=keyboard
+    )
+
+
+@dp.callback_query(F.data.startswith("gen_work:"))
+async def callback_generate_work(callback: CallbackQuery):
+    """Генерирует работу по запросу."""
+    await callback.answer("Начинаю генерацию...")
+    deadline_id = int(callback.data.split(":")[1])
+
+    user = await get_or_create_user(callback.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(GeneratedWork)
+            .join(Deadline)
+            .join(Subject)
+            .options(
+                selectinload(GeneratedWork.deadline).selectinload(Deadline.subject).selectinload(Subject.materials),
+                selectinload(GeneratedWork.title_template)
+            )
+            .where(GeneratedWork.deadline_id == deadline_id, Subject.user_id == user.id)
+        )
+        work = result.scalar_one_or_none()
+
+        if not work:
+            await callback.message.answer("❌ Работа не найдена.")
+            return
+
+        if work.status != "pending":
+            await callback.message.answer(f"Работа уже в статусе: {work.status}")
+            return
+
+        # Update status
+        work.status = "generating"
+        await session.commit()
+
+        await callback.message.answer("🔄 Генерирую работу... Это может занять несколько минут.")
+
+        try:
+            # Collect materials
+            materials_text = []
+            for material in work.deadline.subject.materials:
+                if material.parsed_text:
+                    materials_text.append(f"=== {material.file_name} ===\n{material.parsed_text}")
+
+            # Generate content
+            generator = WorkGeneratorService(gpt_service)
+            content = await generator.generate_work_content(
+                subject_name=work.deadline.subject.name,
+                work_type=work.deadline.work_type,
+                work_number=work.deadline.work_number,
+                title=work.deadline.title,
+                description=work.deadline.description,
+                materials=materials_text
+            )
+
+            # Get template
+            template = work.title_template
+            if not template:
+                template_result = await session.execute(
+                    select(TitleTemplate).where(
+                        TitleTemplate.user_id == user.id,
+                        TitleTemplate.is_default == True
+                    )
+                )
+                template = template_result.scalar_one_or_none()
+
+            # Get user info
+            user_result = await session.execute(select(User).where(User.id == user.id))
+            user_data = user_result.scalar_one()
+
+            # Create document
+            file_name, file_path = await generator.create_document(
+                content=content,
+                subject_name=work.deadline.subject.name,
+                work_type=work.deadline.work_type,
+                work_number=work.deadline.work_number,
+                student_name=user_data.first_name or "Студент",
+                group_number=user_data.group_number or "",
+                template_path=template.file_path if template else None,
+                output_dir=GENERATED_DIR,
+                user_id=user.id,
+                deadline_id=work.deadline_id
+            )
+
+            work.content_text = content
+            work.file_name = file_name
+            work.file_path = file_path
+            work.status = "ready"
+            work.generated_at = datetime.now()
+            await session.commit()
+
+            # Send notification
+            work_type_name = WORK_TYPE_NAMES.get(work.deadline.work_type, work.deadline.work_type)
+            work_title = work_type_name
+            if work.deadline.work_number:
+                work_title += f" №{work.deadline.work_number}"
+
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="📥 Скачать", callback_data=f"work_download:{work.id}"),
+                    InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"work_confirm:{work.id}")
+                ],
+                [
+                    InlineKeyboardButton(text="🔄 Перегенерировать", callback_data=f"work_regenerate:{work.id}")
+                ]
+            ])
+
+            await callback.message.answer(
+                f"✅ **Работа готова!**\n\n"
+                f"📚 {work.deadline.subject.name}\n"
+                f"📝 {work_title}: {work.deadline.title}\n"
+                f"📅 Дедлайн: {work.deadline.deadline_date.strftime('%d.%m.%Y')}\n\n"
+                "Выбери действие:",
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+
+        except Exception as e:
+            work.status = "pending"
+            await session.commit()
+            await callback.message.answer(f"❌ Ошибка генерации: {str(e)}")
+
+
+@dp.callback_query(F.data.startswith("work_download:"))
+async def callback_download_work(callback: CallbackQuery):
+    """Отправляет файл работы пользователю."""
+    await callback.answer()
+    work_id = int(callback.data.split(":")[1])
+
+    user = await get_or_create_user(callback.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(GeneratedWork)
+            .join(Deadline)
+            .join(Subject)
+            .options(selectinload(GeneratedWork.deadline).selectinload(Deadline.subject))
+            .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+        )
+        work = result.scalar_one_or_none()
+
+    if not work or not work.file_path:
+        await callback.message.answer("❌ Файл не найден.")
+        return
+
+    from aiogram.types import FSInputFile
+
+    work_type_name = WORK_TYPE_NAMES.get(work.deadline.work_type, work.deadline.work_type)
+    work_title = work_type_name
+    if work.deadline.work_number:
+        work_title += f" №{work.deadline.work_number}"
+
+    try:
+        document = FSInputFile(work.file_path, filename=work.file_name)
+        await callback.message.answer_document(
+            document,
+            caption=f"📄 {work_title}\n📚 {work.deadline.subject.name}"
+        )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка отправки файла: {str(e)}")
+
+
+@dp.callback_query(F.data.startswith("work_confirm:"))
+async def callback_confirm_work(callback: CallbackQuery):
+    """Подтверждает отправку работы."""
+    await callback.answer()
+    work_id = int(callback.data.split(":")[1])
+
+    user = await get_or_create_user(callback.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(GeneratedWork)
+            .join(Deadline)
+            .join(Subject)
+            .options(selectinload(GeneratedWork.deadline).selectinload(Deadline.subject))
+            .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+        )
+        work = result.scalar_one_or_none()
+
+        if not work:
+            await callback.message.answer("❌ Работа не найдена.")
+            return
+
+        if work.status != "ready":
+            await callback.message.answer(f"Работа не готова к подтверждению (статус: {work.status})")
+            return
+
+        work.status = "confirmed"
+        work.confirmed_at = datetime.now()
+        await session.commit()
+
+    await callback.message.answer(
+        f"✅ Работа подтверждена к отправке!\n\n"
+        f"Она будет автоматически отправлена "
+        f"{'в запланированное время' if work.scheduled_send_at else 'в ближайшее время'}."
+    )
+
+
+@dp.callback_query(F.data.startswith("work_regenerate:"))
+async def callback_regenerate_work(callback: CallbackQuery):
+    """Перегенерирует работу."""
+    await callback.answer()
+    work_id = int(callback.data.split(":")[1])
+
+    user = await get_or_create_user(callback.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(GeneratedWork)
+            .join(Deadline)
+            .join(Subject)
+            .where(GeneratedWork.id == work_id, Subject.user_id == user.id)
+        )
+        work = result.scalar_one_or_none()
+
+        if not work:
+            await callback.message.answer("❌ Работа не найдена.")
+            return
+
+        # Delete old file
+        if work.file_path and os.path.exists(work.file_path):
+            os.remove(work.file_path)
+
+        # Reset status
+        work.status = "pending"
+        work.file_name = None
+        work.file_path = None
+        work.content_text = None
+        work.generated_at = None
+        await session.commit()
+
+    await callback.message.answer(
+        "🔄 Работа сброшена для перегенерации.\n"
+        "Используй /generate чтобы запустить генерацию заново."
+    )
+
+
+# ============= TITLE TEMPLATES HANDLERS =============
+
+@dp.message(Command("templates"))
+async def cmd_templates(message: Message):
+    """Показывает шаблоны титульных листов."""
+    user = await get_or_create_user(message.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(TitleTemplate)
+            .where(TitleTemplate.user_id == user.id)
+            .order_by(TitleTemplate.is_default.desc(), TitleTemplate.created_at.desc())
+        )
+        templates = result.scalars().all()
+
+    if not templates:
+        await message.answer(
+            "📄 У тебя пока нет шаблонов титульных листов.\n\n"
+            "Загрузи шаблон через /upload\\_template\n\n"
+            "**Поддерживаемые плейсхолдеры:**\n"
+            "• `{{subject_name}}` — название предмета\n"
+            "• `{{date}}` — дата выполнения\n"
+            "• `{{work_type}}` — тип работы\n"
+            "• `{{work_number}}` — номер работы\n"
+            "• `{{student_name}}` — имя студента\n"
+            "• `{{group_number}}` — номер группы",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    text = "📄 **Твои шаблоны титульных листов:**\n\n"
+    for t in templates:
+        default_mark = " ⭐ (по умолчанию)" if t.is_default else ""
+        text += f"• **{t.name}**{default_mark}\n"
+        text += f"   Файл: {t.file_name}\n\n"
+
+    text += "\n/upload\\_template — загрузить новый шаблон"
+
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+
+@dp.message(Command("upload_template"))
+async def cmd_upload_template(message: Message, state: FSMContext):
+    """Начинает процесс загрузки шаблона титульного листа."""
+    await state.set_state(UploadTemplateStates.waiting_for_name)
+    await message.answer(
+        "Введи название для шаблона (например, «Основной шаблон»):"
+    )
+
+
+@dp.message(UploadTemplateStates.waiting_for_name)
+async def process_template_name(message: Message, state: FSMContext):
+    """Обрабатывает название шаблона."""
+    await state.update_data(template_name=message.text)
+    await state.set_state(UploadTemplateStates.waiting_for_file)
+    await message.answer(
+        "Теперь отправь DOCX файл шаблона.\n\n"
+        "**Используй плейсхолдеры в шаблоне:**\n"
+        "• `{{subject_name}}` — название предмета\n"
+        "• `{{date}}` — дата выполнения\n"
+        "• `{{work_type}}` — тип работы\n"
+        "• `{{work_number}}` — номер работы\n"
+        "• `{{student_name}}` — имя студента\n"
+        "• `{{group_number}}` — номер группы",
+        parse_mode="Markdown"
+    )
+
+
+@dp.message(UploadTemplateStates.waiting_for_file, F.document)
+async def process_template_file(message: Message, state: FSMContext):
+    """Обрабатывает загруженный шаблон."""
+    data = await state.get_data()
+    template_name = data.get('template_name', 'Шаблон')
+
+    document = message.document
+    file_name = document.file_name or "template.docx"
+
+    if not file_name.endswith(".docx"):
+        await message.answer(
+            "❌ Шаблон должен быть в формате DOCX.",
+            reply_markup=get_main_keyboard()
+        )
+        await state.clear()
+        return
+
+    user = await get_or_create_user(message.from_user.id)
+
+    # Download file
+    file = await bot.get_file(document.file_id)
+    file_content = await bot.download_file(file.file_path)
+    content = file_content.read()
+
+    # Save to disk
+    file_path = os.path.join(TEMPLATES_DIR, f"{user.id}_{datetime.now().timestamp()}_{file_name}")
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    async with async_session() as session:
+        # Check if this is the first template (make it default)
+        result = await session.execute(
+            select(TitleTemplate).where(TitleTemplate.user_id == user.id)
+        )
+        existing = result.scalars().all()
+        is_default = len(existing) == 0
+
+        template = TitleTemplate(
+            user_id=user.id,
+            name=template_name,
+            file_name=file_name,
+            file_path=file_path,
+            is_default=is_default
+        )
+        session.add(template)
+        await session.commit()
+
+    await state.clear()
+
+    default_text = " и установлен по умолчанию" if is_default else ""
+    await message.answer(
+        f"✅ Шаблон **{template_name}** загружен{default_text}!\n\n"
+        "Теперь он будет использоваться при генерации работ.",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
+
+
+# ============= WORK SETTINGS HANDLERS =============
+
+@dp.message(Command("work_settings"))
+async def cmd_work_settings(message: Message):
+    """Показывает настройки автогенерации работ."""
+    user = await get_or_create_user(message.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserWorkSettings).where(UserWorkSettings.user_id == user.id)
+        )
+        settings = result.scalar_one_or_none()
+
+    if not settings:
+        reminder_days = [3, 1]
+        auto_generate = True
+        generate_days = 5
+        require_confirm = True
+        send_days = 1
+    else:
+        reminder_days = settings.reminder_days_before
+        auto_generate = settings.auto_generate
+        generate_days = settings.generate_days_before
+        require_confirm = settings.require_confirmation
+        send_days = settings.default_send_days_before
+
+    text = (
+        "⚙️ **Настройки автогенерации работ:**\n\n"
+        f"📅 Напоминания за: {', '.join(str(d) + ' дн.' for d in reminder_days)}\n"
+        f"🤖 Автогенерация: {'✅ Вкл' if auto_generate else '❌ Выкл'}\n"
+        f"⏰ Генерировать за: {generate_days} дн. до дедлайна\n"
+        f"✅ Требовать подтверждение: {'Да' if require_confirm else 'Нет'}\n"
+        f"📤 Отправлять за: {send_days} дн. до дедлайна\n\n"
+        "Для изменения настроек используй приложение."
+    )
+
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
 # Handle file uploads outside of state (direct sends)

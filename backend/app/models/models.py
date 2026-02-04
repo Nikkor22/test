@@ -19,6 +19,8 @@ class User(Base):
     subjects: Mapped[List["Subject"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     notes: Mapped[List["Note"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     reminder_settings: Mapped[Optional["ReminderSettings"]] = relationship(back_populates="user", uselist=False)
+    title_templates: Mapped[List["TitleTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    work_settings: Mapped[Optional["UserWorkSettings"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class Subject(Base):
@@ -80,7 +82,8 @@ class Deadline(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String(255))
-    work_type: Mapped[str] = mapped_column(String(100))
+    work_type: Mapped[str] = mapped_column(String(100))  # homework, lab, practical, exam, coursework
+    work_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # e.g., Lab #1, Lab #2
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     gpt_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     deadline_date: Mapped[datetime] = mapped_column(DateTime)
@@ -90,6 +93,7 @@ class Deadline(Base):
     # Relationships
     subject: Mapped["Subject"] = relationship(back_populates="deadlines")
     reminders: Mapped[List["Reminder"]] = relationship(back_populates="deadline", cascade="all, delete-orphan")
+    generated_work: Mapped[Optional["GeneratedWork"]] = relationship(back_populates="deadline", uselist=False, cascade="all, delete-orphan")
 
 
 class Note(Base):
@@ -158,3 +162,79 @@ class ReminderSettings(Base):
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="reminder_settings")
+
+
+class TitleTemplate(Base):
+    """Шаблон титульного листа, загружаемый пользователем.
+    Поддерживает плейсхолдеры: {{subject_name}}, {{date}}, {{work_type}}, {{work_number}}, {{student_name}}, {{group_number}}
+    """
+    __tablename__ = "title_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))  # Display name for the template
+    file_name: Mapped[str] = mapped_column(String(500))
+    file_path: Mapped[str] = mapped_column(String(1000))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)  # Default template for user
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="title_templates")
+
+
+class GeneratedWork(Base):
+    """Сгенерированная работа (лабораторная, практическая и т.д.)"""
+    __tablename__ = "generated_works"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    deadline_id: Mapped[int] = mapped_column(ForeignKey("deadlines.id", ondelete="CASCADE"), unique=True)
+    title_template_id: Mapped[Optional[int]] = mapped_column(ForeignKey("title_templates.id", ondelete="SET NULL"), nullable=True)
+
+    file_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    file_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    file_type: Mapped[str] = mapped_column(String(50), default="docx")  # pdf, docx
+
+    content_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # AI-generated content
+
+    # Status: pending -> generating -> ready -> confirmed -> sent
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+
+    # Scheduling
+    scheduled_send_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # User-defined send time
+    auto_send: Mapped[bool] = mapped_column(Boolean, default=False)  # Send automatically or wait for confirmation
+
+    # Tracking
+    generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # User confirmed sending
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    deadline: Mapped["Deadline"] = relationship(back_populates="generated_work")
+    title_template: Mapped[Optional["TitleTemplate"]] = relationship()
+
+
+class UserWorkSettings(Base):
+    """Настройки пользователя для автоматической генерации работ"""
+    __tablename__ = "user_work_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+
+    # Reminder settings (in days before deadline)
+    reminder_days_before: Mapped[list] = mapped_column(JSON, default=[3, 1])  # Notify 3 days and 1 day before
+
+    # Auto-generation settings
+    auto_generate: Mapped[bool] = mapped_column(Boolean, default=True)  # Auto-generate works before deadline
+    generate_days_before: Mapped[int] = mapped_column(Integer, default=5)  # Generate 5 days before deadline
+
+    # Sending settings
+    require_confirmation: Mapped[bool] = mapped_column(Boolean, default=True)  # Require user confirmation before sending
+    default_send_days_before: Mapped[int] = mapped_column(Integer, default=1)  # Default: send 1 day before deadline
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="work_settings")
