@@ -16,6 +16,7 @@ from app.models import (
 )
 from app.services.reminder_service import ReminderService
 from app.services.gpt_service import GPTService
+from app.services.ical_sync_service import ICalSyncService
 
 router = APIRouter(prefix="/api", tags=["api"])
 gpt_service = GPTService()
@@ -181,6 +182,29 @@ class ReminderSettingsResponse(BaseModel):
 class ReminderSettingsUpdate(BaseModel):
     hours_before: Optional[List[int]] = None
     is_enabled: Optional[bool] = None
+
+
+# === Schedule Settings ===
+
+class ScheduleSettingsResponse(BaseModel):
+    ical_url: Optional[str] = None
+    last_schedule_sync: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ScheduleSettingsUpdate(BaseModel):
+    ical_url: Optional[str] = None
+
+
+class SyncResult(BaseModel):
+    success: bool
+    events_parsed: Optional[int] = None
+    patterns_found: Optional[int] = None
+    created: Optional[int] = None
+    updated: Optional[int] = None
+    error: Optional[str] = None
 
 
 # === Title Templates ===
@@ -1044,6 +1068,51 @@ async def update_reminder_settings(
     return ReminderSettingsResponse(
         hours_before=settings.hours_before, is_enabled=settings.is_enabled
     )
+
+
+# ============= Schedule Settings =============
+
+@router.get("/settings/schedule", response_model=ScheduleSettingsResponse)
+async def get_schedule_settings(
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    user = await get_user_by_telegram_id(telegram_id, session)
+    return ScheduleSettingsResponse(
+        ical_url=user.ical_url,
+        last_schedule_sync=user.last_schedule_sync
+    )
+
+
+@router.put("/settings/schedule", response_model=ScheduleSettingsResponse)
+async def update_schedule_settings(
+    data: ScheduleSettingsUpdate,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    user = await get_user_by_telegram_id(telegram_id, session)
+    if data.ical_url is not None:
+        user.ical_url = data.ical_url
+    await session.commit()
+    await session.refresh(user)
+    return ScheduleSettingsResponse(
+        ical_url=user.ical_url,
+        last_schedule_sync=user.last_schedule_sync
+    )
+
+
+@router.post("/schedule/sync", response_model=SyncResult)
+async def sync_schedule(
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    user = await get_user_by_telegram_id(telegram_id, session)
+    if not user.ical_url:
+        return SyncResult(success=False, error="No iCal URL configured")
+
+    sync_service = ICalSyncService(session)
+    result = await sync_service.sync_user_schedule(user)
+    return SyncResult(**result)
 
 
 # ============= Title Templates =============

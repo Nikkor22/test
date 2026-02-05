@@ -14,6 +14,7 @@ from app.routers import router
 from app.bot import bot, dp
 from app.services.reminder_service import ReminderService
 from app.services.work_scheduler import WorkSchedulerService
+from app.services.ical_sync_service import ICalSyncService
 
 settings = get_settings()
 scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
@@ -90,6 +91,29 @@ async def send_work_reminders():
         await work_scheduler.send_work_reminders()
 
 
+async def sync_all_schedules():
+    """Синхронизирует расписание всех пользователей с iCal."""
+    print("Syncing schedules from iCal...")
+
+    async with async_session() as session:
+        # Get all users with ical_url configured
+        result = await session.execute(
+            select(User).where(User.ical_url.isnot(None))
+        )
+        users = result.scalars().all()
+
+        for user in users:
+            try:
+                sync_service = ICalSyncService(session)
+                result = await sync_service.sync_user_schedule(user)
+                if result["success"]:
+                    print(f"Synced schedule for user {user.telegram_id}: {result['created']} created, {result['updated']} updated")
+                else:
+                    print(f"Failed to sync for user {user.telegram_id}: {result.get('error')}")
+            except Exception as e:
+                print(f"Error syncing schedule for user {user.telegram_id}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager для FastAPI."""
@@ -129,6 +153,14 @@ async def lifespan(app: FastAPI):
         send_work_reminders,
         trigger=IntervalTrigger(hours=1),
         id="work_reminder",
+        replace_existing=True
+    )
+
+    # Синхронизация расписания с iCal (каждые 6 часов)
+    scheduler.add_job(
+        sync_all_schedules,
+        trigger=IntervalTrigger(hours=6),
+        id="ical_sync",
         replace_existing=True
     )
 

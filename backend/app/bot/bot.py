@@ -16,6 +16,7 @@ from app.models import (
 from app.services.gpt_service import GPTService
 from app.services.reminder_service import ReminderService
 from app.services.work_generator import WorkGeneratorService
+from app.services.ical_sync_service import ICalSyncService
 
 import os
 import io
@@ -59,6 +60,10 @@ class UploadTemplateStates(StatesGroup):
 
 class GenerateWorkStates(StatesGroup):
     waiting_for_deadline = State()
+
+
+class ScheduleUrlStates(StatesGroup):
+    waiting_for_url = State()
 
 
 WORK_TYPE_NAMES = {
@@ -167,9 +172,13 @@ async def cmd_help(message: Message):
         "/start - Начало работы\n"
         "/teachers - Список преподавателей\n"
         "/deadlines - Список дедлайнов\n"
+        "/schedule - Показать расписание\n"
         "/add\\_teacher - Добавить преподавателя\n"
         "/upload - Загрузить материал\n"
         "/settings - Настройки напоминаний\n\n"
+        "**Расписание:**\n"
+        "/schedule\\_url - Указать ссылку на iCal расписание\n"
+        "/sync - Синхронизировать расписание вручную\n\n"
         "**Работы и генерация:**\n"
         "/works - Список сгенерированных работ\n"
         "/generate - Сгенерировать работу вручную\n"
@@ -187,6 +196,167 @@ async def cmd_help(message: Message):
         "• «Курсовая по экономике до конца месяца, тема - инфляция»",
         parse_mode="Markdown"
     )
+
+
+@dp.message(Command("schedule_url"))
+async def cmd_schedule_url(message: Message, state: FSMContext):
+    """Устанавливает URL для iCal расписания."""
+    user = await get_or_create_user(message.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.id == user.id)
+        )
+        db_user = result.scalar_one_or_none()
+        current_url = db_user.ical_url if db_user else None
+
+    if current_url:
+        await state.set_state(ScheduleUrlStates.waiting_for_url)
+        await message.answer(
+            f"📅 Текущий URL расписания:\n`{current_url}`\n\n"
+            "Отправь новый URL для iCal расписания (например, с сайта МИРЕА).\n"
+            "Или отправь /cancel для отмены.",
+            parse_mode="Markdown"
+        )
+    else:
+        await state.set_state(ScheduleUrlStates.waiting_for_url)
+        await message.answer(
+            "📅 Отправь URL для iCal расписания.\n\n"
+            "Например: `https://english.mirea.ru/schedule/api/ical/1/856`\n\n"
+            "Ссылку можно получить на сайте расписания МИРЕА.",
+            parse_mode="Markdown"
+        )
+
+
+@dp.message(ScheduleUrlStates.waiting_for_url)
+async def process_schedule_url(message: Message, state: FSMContext):
+    """Обрабатывает введённый URL расписания."""
+    url = message.text.strip()
+
+    # Basic URL validation
+    if not url.startswith("http://") and not url.startswith("https://"):
+        await message.answer("❌ Неверный формат URL. Ссылка должна начинаться с http:// или https://")
+        return
+
+    user = await get_or_create_user(message.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.id == user.id)
+        )
+        db_user = result.scalar_one_or_none()
+        if db_user:
+            db_user.ical_url = url
+            await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"✅ URL расписания сохранён!\n\n"
+        f"Расписание будет синхронизироваться автоматически каждые 6 часов.\n"
+        f"Для ручной синхронизации используй /sync",
+        reply_markup=get_main_keyboard()
+    )
+
+
+@dp.message(Command("sync"))
+async def cmd_sync(message: Message):
+    """Синхронизирует расписание вручную."""
+    user = await get_or_create_user(message.from_user.id)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.id == user.id)
+        )
+        db_user = result.scalar_one_or_none()
+
+        if not db_user or not db_user.ical_url:
+            await message.answer(
+                "❌ URL расписания не настроен.\n"
+                "Используй /schedule\\_url чтобы указать ссылку на iCal.",
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard()
+            )
+            return
+
+        await message.answer("🔄 Синхронизация расписания...")
+        await bot.send_chat_action(message.chat.id, "typing")
+
+        sync_service = ICalSyncService(session)
+        result = await sync_service.sync_user_schedule(db_user)
+
+        if result["success"]:
+            await message.answer(
+                f"✅ Расписание синхронизировано!\n\n"
+                f"📊 Событий в iCal: {result['events_parsed']}\n"
+                f"📅 Уникальных занятий: {result['patterns_found']}\n"
+                f"➕ Добавлено: {result['created']}\n"
+                f"🔄 Обновлено: {result['updated']}",
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await message.answer(
+                f"❌ Ошибка синхронизации: {result.get('error', 'Неизвестная ошибка')}",
+                reply_markup=get_main_keyboard()
+            )
+
+
+@dp.message(Command("schedule"))
+async def cmd_schedule(message: Message):
+    """Показывает расписание на сегодня/завтра."""
+    user = await get_or_create_user(message.from_user.id)
+    from datetime import date
+
+    today = date.today()
+    day_of_week = today.weekday()
+    week_number = today.isocalendar()[1]
+    week_type = "even" if week_number % 2 == 0 else "odd"
+
+    days_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+
+    async with async_session() as session:
+        # Get all subjects with schedule entries
+        result = await session.execute(
+            select(Subject)
+            .options(selectinload(Subject.schedule_entries))
+            .where(Subject.user_id == user.id)
+        )
+        subjects = result.scalars().all()
+
+        if not subjects:
+            await message.answer(
+                "📅 Расписание пусто.\n\n"
+                "Настрой iCal с помощью /schedule\\_url",
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard()
+            )
+            return
+
+        # Collect entries for today
+        today_entries = []
+        for subject in subjects:
+            for entry in subject.schedule_entries:
+                if entry.day_of_week == day_of_week:
+                    if entry.week_type == "both" or entry.week_type == week_type:
+                        today_entries.append((subject.name, entry))
+
+        # Sort by start time
+        today_entries.sort(key=lambda x: x[1].start_time)
+
+        week_text = "чётная" if week_type == "even" else "нечётная"
+        text = f"📅 **Расписание на сегодня** ({days_ru[day_of_week]}, {week_text} неделя)\n\n"
+
+        if not today_entries:
+            text += "🎉 Сегодня занятий нет!"
+        else:
+            for subject_name, entry in today_entries:
+                type_emoji = "📖" if entry.class_type == "lecture" else "📝" if entry.class_type == "practice" else "🔬"
+                text += f"{type_emoji} **{entry.start_time}-{entry.end_time}** {subject_name}\n"
+                if entry.room:
+                    text += f"   📍 {entry.room}\n"
+                if entry.teacher_name:
+                    text += f"   👨‍🏫 {entry.teacher_name}\n"
+
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
 @dp.message(Command("teachers"))

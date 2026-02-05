@@ -13,6 +13,8 @@ class User(Base):
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     first_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     group_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    ical_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    last_schedule_sync: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
