@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react';
-import { format, addDays, startOfWeek, isToday, parseISO, differenceInDays } from 'date-fns';
+import {
+  format,
+  addDays,
+  addWeeks,
+  addMonths,
+  startOfWeek,
+  startOfMonth,
+  isToday,
+  isSameMonth,
+  isSameDay,
+  parseISO,
+  differenceInDays,
+  getWeek
+} from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { scheduleApi, deadlinesApi, ScheduleEntry, Deadline } from '../api/client';
 
@@ -18,21 +31,28 @@ const CLASS_TYPE_COLORS: Record<string, string> = {
   lab: '#22c55e',
 };
 
+type ViewMode = 'week' | 'month';
+
 function SchedulePage() {
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDay, setSelectedDay] = useState(new Date().getDay() === 0 ? 6 : new Date().getDay() - 1);
-  const [weekType, setWeekType] = useState<'even' | 'odd'>(() => {
-    const weekNum = Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [viewMode, setViewMode] = useState<ViewMode>('week');
+
+  // Calculate week type based on selected date
+  const getWeekType = (date: Date): 'even' | 'odd' => {
+    const weekNum = getWeek(date, { weekStartsOn: 1 });
     return weekNum % 2 === 0 ? 'even' : 'odd';
-  });
-  const [currentWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
+  };
+
+  const [weekType, setWeekType] = useState<'even' | 'odd'>(getWeekType(new Date()));
 
   const fetchData = async () => {
     try {
       const [scheduleRes, deadlinesRes] = await Promise.all([
-        scheduleApi.getAll(undefined, weekType),
+        scheduleApi.getAll(),
         deadlinesApi.getAll(false),
       ]);
       setSchedule(scheduleRes.data);
@@ -46,10 +66,84 @@ function SchedulePage() {
 
   useEffect(() => {
     fetchData();
-  }, [weekType]);
+  }, []);
 
+  // Update week type when selected date changes
+  useEffect(() => {
+    setWeekType(getWeekType(selectedDate));
+  }, [selectedDate]);
+
+  // Get filtered schedule for current view
+  const getScheduleForDate = (date: Date) => {
+    const dayOfWeek = date.getDay() === 0 ? 6 : date.getDay() - 1; // Convert to Mon=0
+    const dateWeekType = getWeekType(date);
+    return schedule.filter(
+      (e) => e.day_of_week === dayOfWeek &&
+             (e.week_type === 'both' || e.week_type === dateWeekType)
+    );
+  };
+
+  const selectedDaySchedule = getScheduleForDate(selectedDate);
+  const selectedDayOfWeek = selectedDate.getDay() === 0 ? 6 : selectedDate.getDay() - 1;
+
+  // Week navigation
+  const currentWeekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(currentWeekStart, i));
-  const todaySchedule = schedule.filter((e) => e.day_of_week === selectedDay);
+
+  const goToPrevWeek = () => {
+    const newDate = addWeeks(selectedDate, -1);
+    setSelectedDate(newDate);
+    setCurrentMonth(newDate);
+  };
+
+  const goToNextWeek = () => {
+    const newDate = addWeeks(selectedDate, 1);
+    setSelectedDate(newDate);
+    setCurrentMonth(newDate);
+  };
+
+  // Month navigation
+  const goToPrevMonth = () => {
+    setCurrentMonth(addMonths(currentMonth, -1));
+  };
+
+  const goToNextMonth = () => {
+    setCurrentMonth(addMonths(currentMonth, 1));
+  };
+
+  const goToToday = () => {
+    const today = new Date();
+    setSelectedDate(today);
+    setCurrentMonth(today);
+  };
+
+  // Generate month calendar days
+  const getMonthDays = () => {
+    const monthStart = startOfMonth(currentMonth);
+    const startDate = startOfWeek(monthStart, { weekStartsOn: 1 });
+
+    const days = [];
+    let day = startDate;
+
+    // Generate 6 weeks of days
+    for (let i = 0; i < 42; i++) {
+      days.push(day);
+      day = addDays(day, 1);
+    }
+
+    return days;
+  };
+
+  // Check if date has classes
+  const hasClasses = (date: Date) => {
+    return getScheduleForDate(date).length > 0;
+  };
+
+  // Check if date has deadline
+  const hasDeadline = (date: Date) => {
+    return deadlines.some(d => isSameDay(parseISO(d.deadline_date), date));
+  };
+
   const upcomingDeadlines = deadlines
     .filter((d) => !d.is_completed)
     .sort((a, b) => new Date(a.deadline_date).getTime() - new Date(b.deadline_date).getTime())
@@ -89,61 +183,139 @@ function SchedulePage() {
         </div>
       )}
 
-      {/* Week Type Toggle */}
-      <div className="week-toggle">
+      {/* View Mode Toggle */}
+      <div className="view-toggle">
         <button
-          className={`week-toggle-btn ${weekType === 'odd' ? 'active' : ''}`}
-          onClick={() => setWeekType('odd')}
+          className={`view-toggle-btn ${viewMode === 'week' ? 'active' : ''}`}
+          onClick={() => setViewMode('week')}
         >
-          Нечетная
+          Неделя
         </button>
         <button
-          className={`week-toggle-btn ${weekType === 'even' ? 'active' : ''}`}
-          onClick={() => setWeekType('even')}
+          className={`view-toggle-btn ${viewMode === 'month' ? 'active' : ''}`}
+          onClick={() => setViewMode('month')}
         >
-          Четная
+          Месяц
+        </button>
+        <button className="today-btn" onClick={goToToday}>
+          Сегодня
         </button>
       </div>
 
-      {/* Week Day Selector */}
-      <div className="day-selector">
-        {weekDays.map((day, idx) => {
-          const dayIdx = idx; // 0=Mon ... 6=Sun
-          const hasClasses = schedule.some((e) => e.day_of_week === dayIdx);
-          return (
-            <button
-              key={idx}
-              className={`day-btn ${selectedDay === dayIdx ? 'active' : ''} ${isToday(day) ? 'today' : ''}`}
-              onClick={() => {
-                setSelectedDay(dayIdx);
-                window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
-              }}
-            >
-              <span className="day-btn-name">{DAY_NAMES[idx]}</span>
-              <span className="day-btn-date">{format(day, 'd')}</span>
-              {hasClasses && <span className="day-btn-dot"></span>}
+      {viewMode === 'week' ? (
+        <>
+          {/* Week Navigation */}
+          <div className="calendar-nav">
+            <button className="nav-btn" onClick={goToPrevWeek}>
+              ←
             </button>
-          );
-        })}
-      </div>
+            <span className="nav-title">
+              {format(currentWeekStart, 'd MMM', { locale: ru })} — {format(addDays(currentWeekStart, 6), 'd MMM yyyy', { locale: ru })}
+            </span>
+            <button className="nav-btn" onClick={goToNextWeek}>
+              →
+            </button>
+          </div>
+
+          {/* Week Type Indicator */}
+          <div className="week-indicator">
+            {weekType === 'even' ? 'Чётная неделя' : 'Нечётная неделя'}
+          </div>
+
+          {/* Week Day Selector */}
+          <div className="day-selector">
+            {weekDays.map((day, idx) => {
+              const dayHasClasses = hasClasses(day);
+              const dayHasDeadline = hasDeadline(day);
+              return (
+                <button
+                  key={idx}
+                  className={`day-btn ${isSameDay(selectedDate, day) ? 'active' : ''} ${isToday(day) ? 'today' : ''}`}
+                  onClick={() => {
+                    setSelectedDate(day);
+                    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
+                  }}
+                >
+                  <span className="day-btn-name">{DAY_NAMES[idx]}</span>
+                  <span className="day-btn-date">{format(day, 'd')}</span>
+                  <div className="day-btn-dots">
+                    {dayHasClasses && <span className="day-btn-dot classes"></span>}
+                    {dayHasDeadline && <span className="day-btn-dot deadline"></span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Month Navigation */}
+          <div className="calendar-nav">
+            <button className="nav-btn" onClick={goToPrevMonth}>
+              ←
+            </button>
+            <span className="nav-title">
+              {format(currentMonth, 'LLLL yyyy', { locale: ru })}
+            </span>
+            <button className="nav-btn" onClick={goToNextMonth}>
+              →
+            </button>
+          </div>
+
+          {/* Month Calendar Grid */}
+          <div className="month-calendar">
+            <div className="month-header">
+              {DAY_NAMES.map((name) => (
+                <div key={name} className="month-header-cell">{name}</div>
+              ))}
+            </div>
+            <div className="month-grid">
+              {getMonthDays().map((day, idx) => {
+                const dayHasClasses = hasClasses(day);
+                const dayHasDeadline = hasDeadline(day);
+                const isCurrentMonth = isSameMonth(day, currentMonth);
+                return (
+                  <button
+                    key={idx}
+                    className={`month-day ${isSameDay(selectedDate, day) ? 'active' : ''} ${isToday(day) ? 'today' : ''} ${!isCurrentMonth ? 'other-month' : ''}`}
+                    onClick={() => {
+                      setSelectedDate(day);
+                      window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
+                    }}
+                  >
+                    <span className="month-day-num">{format(day, 'd')}</span>
+                    <div className="month-day-dots">
+                      {dayHasClasses && <span className="month-day-dot classes"></span>}
+                      {dayHasDeadline && <span className="month-day-dot deadline"></span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Day Title */}
       <div className="schedule-day-title">
-        {DAY_NAMES_FULL[selectedDay]}, {format(weekDays[selectedDay], 'd MMMM', { locale: ru })}
+        {DAY_NAMES_FULL[selectedDayOfWeek]}, {format(selectedDate, 'd MMMM yyyy', { locale: ru })}
+        <span className="schedule-day-week">
+          ({getWeekType(selectedDate) === 'even' ? 'чёт.' : 'нечёт.'} неделя)
+        </span>
       </div>
 
       {/* Schedule Cards */}
-      {todaySchedule.length === 0 ? (
+      {selectedDaySchedule.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📅</div>
           <div className="empty-state-title">Нет занятий</div>
           <div className="empty-state-text">
-            В этот день пар нет. Добавьте расписание через бота или в настройках.
+            В этот день пар нет. Настрой расписание через /schedule_url в боте.
           </div>
         </div>
       ) : (
         <div className="schedule-list">
-          {todaySchedule
+          {selectedDaySchedule
             .sort((a, b) => a.start_time.localeCompare(b.start_time))
             .map((entry) => (
               <div key={entry.id} className="schedule-card">
@@ -162,15 +334,27 @@ function SchedulePage() {
                       {CLASS_TYPE_LABELS[entry.class_type] || entry.class_type}
                     </span>
                     {entry.room && <span className="schedule-card-room">ауд. {entry.room}</span>}
-                    {entry.week_type !== 'both' && (
-                      <span className="schedule-card-week">
-                        {entry.week_type === 'even' ? 'чет.' : 'нечет.'}
-                      </span>
-                    )}
                   </div>
                   {entry.teacher_name && (
                     <div className="schedule-card-teacher">{entry.teacher_name}</div>
                   )}
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {/* Deadlines for selected day */}
+      {deadlines.filter(d => isSameDay(parseISO(d.deadline_date), selectedDate)).length > 0 && (
+        <div className="day-deadlines">
+          <div className="day-deadlines-title">📌 Дедлайны в этот день</div>
+          {deadlines
+            .filter(d => isSameDay(parseISO(d.deadline_date), selectedDate))
+            .map(deadline => (
+              <div key={deadline.id} className={`day-deadline-card ${deadline.is_completed ? 'completed' : ''}`}>
+                <div className="day-deadline-title">{deadline.title}</div>
+                <div className="day-deadline-meta">
+                  {deadline.subject_name} — {deadline.work_type}
                 </div>
               </div>
             ))}

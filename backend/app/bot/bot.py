@@ -611,10 +611,26 @@ async def process_new_subject_name(message: Message, state: FSMContext):
             await session.commit()
 
         await state.clear()
-        await message.answer(
-            f"Предмет «{subject_name}» создан и файл «{pending_file_name}» загружен!",
-            reply_markup=get_main_keyboard()
-        )
+
+        # Detailed notification
+        file_ext_clean = file_ext.replace(".", "")
+        file_type_names = {
+            'pdf': '📕 PDF документ',
+            'docx': '📘 Word документ',
+            'doc': '📘 Word документ',
+            'xlsx': '📗 Excel таблица',
+            'xls': '📗 Excel таблица',
+            'txt': '📄 Текстовый файл',
+        }
+        file_type_label = file_type_names.get(file_ext_clean, '📁 Файл')
+
+        text = f"✅ **Материал загружен!**\n\n"
+        text += f"📚 **Создан предмет:** {subject_name}\n"
+        text += f"{file_type_label}\n"
+        text += f"📎 **Файл:** {pending_file_name}\n"
+        text += f"\n💡 Теперь ты можешь загружать материалы к этому предмету через /upload"
+
+        await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
     else:
         await state.set_state(UploadMaterialStates.waiting_for_file)
         await message.answer(f"Предмет «{subject_name}» создан. Теперь отправь файл (PDF, Excel, DOCX или TXT):")
@@ -694,9 +710,29 @@ async def process_upload_file(message: Message, state: FSMContext):
         subject_name = subject.name
 
     await state.clear()
-    text = f"✅ Файл **{file_name}** загружен к предмету **{subject_name}**!"
+
+    # Detailed notification
+    file_type_names = {
+        'pdf': '📕 PDF документ',
+        'docx': '📘 Word документ',
+        'doc': '📘 Word документ',
+        'xlsx': '📗 Excel таблица',
+        'xls': '📗 Excel таблица',
+        'txt': '📄 Текстовый файл',
+    }
+    file_type_label = file_type_names.get(file_ext, '📁 Файл')
+
+    text = f"✅ **Материал загружен!**\n\n"
+    text += f"{file_type_label}\n"
+    text += f"📎 **Файл:** {file_name}\n"
+    text += f"📚 **Предмет:** {subject_name}\n"
     if parsed_text:
-        text += f"\n📄 Извлечено {len(parsed_text)} символов текста."
+        text += f"📝 **Извлечено:** {len(parsed_text):,} символов текста\n"
+        # Show preview of extracted text
+        preview = parsed_text[:200].replace('\n', ' ').strip()
+        if preview:
+            text += f"\n💬 *Превью:* {preview}..."
+
     await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 

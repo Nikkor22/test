@@ -567,6 +567,180 @@ body {
   color: white;
 }
 
+/* View Mode Toggle */
+.view-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-card);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+
+.view-toggle-btn {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.view-toggle-btn.active {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.today-btn {
+  padding: 8px 12px;
+  border: none;
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.today-btn:hover {
+  background: var(--accent-primary);
+}
+
+/* Calendar Navigation */
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 8px 0;
+}
+
+.nav-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-btn:hover {
+  background: var(--accent-primary);
+}
+
+.nav-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Week Type Indicator */
+.week-indicator {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* Month Calendar */
+.month-calendar {
+  margin-bottom: 16px;
+}
+
+.month-header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.month-header-cell {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 6px 0;
+}
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.month-day {
+  aspect-ratio: 1;
+  border: none;
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  min-height: 40px;
+}
+
+.month-day:hover {
+  background: var(--bg-card-hover);
+}
+
+.month-day.active {
+  background: var(--accent-gradient);
+  color: white;
+}
+
+.month-day.today {
+  border: 2px solid var(--accent-primary);
+}
+
+.month-day.other-month {
+  opacity: 0.3;
+}
+
+.month-day-num {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.month-day-dots {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.month-day-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+
+.month-day-dot.classes {
+  background: var(--accent-secondary);
+}
+
+.month-day-dot.deadline {
+  background: var(--danger);
+}
+
+.month-day.active .month-day-dot {
+  background: white;
+}
+
 /* Day Selector */
 .day-selector {
   display: flex;
@@ -613,12 +787,24 @@ body {
   margin-top: 2px;
 }
 
+.day-btn-dots {
+  display: flex;
+  gap: 2px;
+  margin-top: 3px;
+}
+
 .day-btn-dot {
   width: 4px;
   height: 4px;
   border-radius: 50%;
+}
+
+.day-btn-dot.classes {
   background: var(--accent-secondary);
-  margin-top: 3px;
+}
+
+.day-btn-dot.deadline {
+  background: var(--danger);
 }
 
 .day-btn.active .day-btn-dot {
@@ -631,6 +817,51 @@ body {
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 12px;
+}
+
+.schedule-day-week {
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+/* Day Deadlines */
+.day-deadlines {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.day-deadlines-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.day-deadline-card {
+  padding: 12px;
+  background: var(--bg-card);
+  border-radius: 10px;
+  border-left: 3px solid var(--danger);
+  margin-bottom: 8px;
+}
+
+.day-deadline-card.completed {
+  opacity: 0.5;
+  border-left-color: var(--success);
+}
+
+.day-deadline-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.day-deadline-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
 }
 
 /* Schedule List */
