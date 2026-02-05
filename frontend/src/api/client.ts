@@ -6,7 +6,10 @@ const getTelegramId = (): number => {
   if (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
     return window.Telegram.WebApp.initDataUnsafe.user.id;
   }
-  return 7167288809;
+  // Fallback for development - change this to your telegram_id
+  const fallbackId = 7167288809;
+  console.log('[API] Using fallback telegram_id:', fallbackId);
+  return fallbackId;
 };
 
 const api = axios.create({

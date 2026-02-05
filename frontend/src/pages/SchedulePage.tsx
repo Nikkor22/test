@@ -55,6 +55,7 @@ function SchedulePage() {
         scheduleApi.getAll(),
         deadlinesApi.getAll(false),
       ]);
+      console.log('[Schedule] Fetched entries:', scheduleRes.data.length);
       setSchedule(scheduleRes.data);
       setDeadlines(deadlinesRes.data);
     } catch (error) {
@@ -310,7 +311,9 @@ function SchedulePage() {
           <div className="empty-state-icon">📅</div>
           <div className="empty-state-title">Нет занятий</div>
           <div className="empty-state-text">
-            В этот день пар нет. Настрой расписание через /schedule_url в боте.
+            {schedule.length === 0
+              ? 'Расписание не загружено. Используй /schedule_url и /sync в боте для синхронизации.'
+              : 'В этот день пар нет.'}
           </div>
         </div>
       ) : (
