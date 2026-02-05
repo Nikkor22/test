@@ -29,9 +29,11 @@ gpt_service = GPTService()
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
 GENERATED_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated")
+MATERIALS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "materials")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 os.makedirs(GENERATED_DIR, exist_ok=True)
+os.makedirs(MATERIALS_DIR, exist_ok=True)
 
 
 class AddTeacherStates(StatesGroup):
@@ -46,6 +48,7 @@ class ReminderSettingsStates(StatesGroup):
 
 class UploadMaterialStates(StatesGroup):
     waiting_for_subject = State()
+    waiting_for_new_subject = State()
     waiting_for_file = State()
 
 
@@ -123,8 +126,8 @@ async def get_or_create_user(telegram_id: int, username: str = None, first_name:
             session.add(reminder_settings)
 
             await session.commit()
-            await session.refresh(user)
 
+        await session.refresh(user)
         return user
 
 
@@ -361,22 +364,90 @@ async def cmd_upload(message: Message, state: FSMContext):
         subjects = result.scalars().all()
 
     if not subjects:
+        await state.set_state(UploadMaterialStates.waiting_for_new_subject)
+        await state.update_data(user_id=user.id)
         await message.answer(
-            "У тебя пока нет предметов. Сначала добавь преподавателя или напиши заметку!",
+            "У тебя пока нет предметов. Напиши название предмета, чтобы создать его:",
             reply_markup=get_main_keyboard()
         )
         return
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    buttons = [
         [InlineKeyboardButton(text=s.name, callback_data=f"upload_subj_{s.id}")]
         for s in subjects
-    ])
+    ]
+    buttons.append([InlineKeyboardButton(text="➕ Новый предмет", callback_data="upload_new_subj")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     await state.set_state(UploadMaterialStates.waiting_for_subject)
     await message.answer(
         "Выбери предмет для загрузки материала:",
         reply_markup=keyboard
     )
+
+
+@dp.callback_query(F.data == "upload_new_subj")
+async def process_upload_new_subject(callback: CallbackQuery, state: FSMContext):
+    """Предлагает ввести название нового предмета."""
+    await callback.answer()
+    user = await get_or_create_user(callback.from_user.id)
+    await state.update_data(user_id=user.id)
+    await state.set_state(UploadMaterialStates.waiting_for_new_subject)
+    await callback.message.answer("Напиши название нового предмета:")
+
+
+@dp.message(UploadMaterialStates.waiting_for_new_subject)
+async def process_new_subject_name(message: Message, state: FSMContext):
+    """Создает новый предмет и переходит к загрузке файла."""
+    data = await state.get_data()
+    user_id = data.get("user_id")
+    if not user_id:
+        user = await get_or_create_user(message.from_user.id)
+        user_id = user.id
+
+    subject_name = message.text.strip()
+    async with async_session() as session:
+        subject = Subject(user_id=user_id, name=subject_name)
+        session.add(subject)
+        await session.commit()
+        await session.refresh(subject)
+        subject_id = subject.id
+
+    await state.update_data(subject_id=subject_id)
+
+    # If there's a pending file from direct send, process it now
+    pending_file_id = data.get("pending_file_id")
+    if pending_file_id:
+        pending_file_name = data.get("pending_file_name", "file")
+        file = await bot.get_file(pending_file_id)
+        file_bytes = await bot.download_file(file.file_path)
+
+        os.makedirs(MATERIALS_DIR, exist_ok=True)
+        safe_name = f"{subject_id}_{pending_file_name}"
+        save_path = os.path.join(MATERIALS_DIR, safe_name)
+
+        with open(save_path, "wb") as f:
+            f.write(file_bytes.read())
+
+        file_ext = os.path.splitext(pending_file_name)[1].lower()
+        async with async_session() as session:
+            material = Material(
+                subject_id=subject_id,
+                file_name=pending_file_name,
+                file_type=file_ext.replace(".", ""),
+                file_path=save_path
+            )
+            session.add(material)
+            await session.commit()
+
+        await state.clear()
+        await message.answer(
+            f"Предмет «{subject_name}» создан и файл «{pending_file_name}» загружен!",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await state.set_state(UploadMaterialStates.waiting_for_file)
+        await message.answer(f"Предмет «{subject_name}» создан. Теперь отправь файл (PDF, Excel, DOCX или TXT):")
 
 
 @dp.callback_query(F.data.startswith("upload_subj_"))
@@ -1068,18 +1139,23 @@ async def handle_document(message: Message, state: FSMContext):
         subjects = result.scalars().all()
 
     if not subjects:
+        await state.update_data(user_id=user.id,
+                               pending_file_id=message.document.file_id,
+                               pending_file_name=message.document.file_name)
+        await state.set_state(UploadMaterialStates.waiting_for_new_subject)
         await message.answer(
-            "У тебя пока нет предметов. Сначала добавь преподавателя или напиши заметку!\n"
-            "После этого ты сможешь загружать файлы.",
+            "У тебя пока нет предметов. Напиши название предмета, чтобы создать его и загрузить файл:",
             reply_markup=get_main_keyboard()
         )
         return
 
     # Ask which subject
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    buttons = [
         [InlineKeyboardButton(text=s.name, callback_data=f"upload_subj_{s.id}")]
         for s in subjects
-    ])
+    ]
+    buttons.append([InlineKeyboardButton(text="➕ Новый предмет", callback_data="upload_new_subj")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     # Store document info for later
     await state.update_data(pending_file_id=message.document.file_id,
@@ -1249,10 +1325,14 @@ async def process_note(message: Message):
         await session.commit()
 
         if not parsed_data.get("teacher") and not parsed_data.get("deadline"):
-            response_text += "ℹ️ Не удалось извлечь информацию о преподавателе или дедлайне.\n"
-            response_text += "Попробуй написать более конкретно, например:\n"
-            response_text += "• «Петров по матану строгий — лектор»\n"
-            response_text += "• «Контрольная по физике 15 февраля»"
+            if parsed_data.get("error"):
+                response_text += "⚠️ Не удалось обработать заметку через AI (проверь OPENAI_API_KEY в .env).\n"
+                response_text += "Заметка сохранена как есть.\n"
+            else:
+                response_text += "ℹ️ Не удалось извлечь информацию о преподавателе или дедлайне.\n"
+                response_text += "Попробуй написать более конкретно, например:\n"
+                response_text += "• «Петров по матану строгий — лектор»\n"
+                response_text += "• «Контрольная по физике 15 февраля»"
 
     await message.answer(response_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
