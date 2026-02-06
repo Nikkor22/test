@@ -11,6 +11,7 @@ function SubjectsPage() {
   const [uploading, setUploading] = useState(false);
   const [newSubject, setNewSubject] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const subjectDetailRef = useRef<HTMLDivElement>(null);
 
   const fetchData = async () => {
     try {
@@ -34,6 +35,10 @@ function SubjectsPage() {
   useEffect(() => {
     if (selectedSubject) {
       summaryApi.get(selectedSubject).then((res) => setSummary(res.data)).catch(() => setSummary(null));
+      // Scroll to detail section
+      setTimeout(() => {
+        subjectDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
     }
   }, [selectedSubject]);
 
@@ -184,7 +189,7 @@ function SubjectsPage() {
 
           {/* Selected Subject Detail */}
           {selectedSubject && (
-            <div style={{ marginTop: 16 }}>
+            <div ref={subjectDetailRef} style={{ marginTop: 16 }}>
               {/* Summary */}
               <div className="card">
                 <div className="card-header">

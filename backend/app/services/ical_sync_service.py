@@ -10,7 +10,7 @@ from icalendar import Calendar
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import User, Subject, ScheduleEntry
+from app.models import User, Subject, ScheduleEntry, Teacher
 
 
 class ICalSyncService:
@@ -97,11 +97,31 @@ class ICalSyncService:
 
     def _parse_summary(self, summary: str) -> tuple[str, str]:
         """Parse subject name and class type from summary."""
-        # Common patterns: "Математика (лекция)", "Физика (практика)", "Программирование (лаб)"
+        # Common patterns:
+        # "ПР Математика", "ЛК Физика", "ЛАБ Программирование"
+        # "Математика (лекция)", "Физика (практика)"
         class_type = "lecture"
+        subject_name = summary.strip()
 
-        # Detect class type from keywords
-        summary_lower = summary.lower()
+        # First check for prefix patterns: "ПР ", "ЛК ", "ЛАБ ", "ЛЕК ", "СЕМ "
+        prefix_patterns = [
+            (r'^ПР\s+', 'practice'),
+            (r'^ПРАКТ[А-Я]*\s+', 'practice'),
+            (r'^СЕМ[А-Я]*\s+', 'practice'),
+            (r'^ЛК\s+', 'lecture'),
+            (r'^ЛЕК[А-Я]*\s+', 'lecture'),
+            (r'^ЛАБ[А-Я]*\s+', 'lab'),
+        ]
+
+        for pattern, ctype in prefix_patterns:
+            match = re.match(pattern, subject_name, re.IGNORECASE)
+            if match:
+                class_type = ctype
+                subject_name = subject_name[match.end():].strip()
+                break
+
+        # Also check for suffix patterns in parentheses: "(лекция)", "(практика)", "(лаб)"
+        summary_lower = subject_name.lower()
         if "лек" in summary_lower:
             class_type = "lecture"
         elif "практ" in summary_lower or "семинар" in summary_lower:
@@ -109,8 +129,9 @@ class ICalSyncService:
         elif "лаб" in summary_lower:
             class_type = "lab"
 
-        # Remove class type suffix from subject name
-        subject_name = re.sub(r'\s*\([^)]*\)\s*$', '', summary).strip()
+        # Remove class type suffix from subject name (parentheses at end)
+        subject_name = re.sub(r'\s*\([^)]*\)\s*$', '', subject_name).strip()
+
         if not subject_name:
             subject_name = summary
 
@@ -156,10 +177,20 @@ class ICalSyncService:
         # Create/update schedule entries
         created = 0
         updated = 0
+        teachers_created = 0
 
         for pattern in patterns:
             # Get or create subject
             subject = await self._get_or_create_subject(user.id, pattern["subject_name"])
+
+            # Get or create teacher if teacher_name exists
+            if pattern["teacher_name"]:
+                await self._get_or_create_teacher(
+                    subject.id,
+                    pattern["teacher_name"],
+                    pattern["class_type"]
+                )
+                teachers_created += 1
 
             # Check if schedule entry exists
             result = await self.session.execute(
@@ -205,6 +236,7 @@ class ICalSyncService:
             "patterns_found": len(patterns),
             "created": created,
             "updated": updated,
+            "teachers_created": teachers_created,
         }
 
     def _group_events_to_patterns(self, events: list[dict]) -> list[dict]:
@@ -262,6 +294,30 @@ class ICalSyncService:
             await self.session.flush()
 
         return subject
+
+    async def _get_or_create_teacher(self, subject_id: int, name: str, class_type: str) -> Teacher:
+        """Get existing teacher or create new one for the subject."""
+        # Determine role based on class type
+        role = "lecturer" if class_type == "lecture" else "practitioner"
+
+        result = await self.session.execute(
+            select(Teacher).where(
+                Teacher.subject_id == subject_id,
+                Teacher.name == name
+            )
+        )
+        teacher = result.scalar_one_or_none()
+
+        if not teacher:
+            teacher = Teacher(
+                subject_id=subject_id,
+                name=name,
+                role=role
+            )
+            self.session.add(teacher)
+            await self.session.flush()
+
+        return teacher
 
     async def clear_user_schedule(self, user: User) -> int:
         """Clear all schedule entries for a user."""

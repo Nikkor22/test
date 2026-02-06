@@ -290,7 +290,8 @@ async def cmd_sync(message: Message):
                 f"📊 Событий в iCal: {result['events_parsed']}\n"
                 f"📅 Уникальных занятий: {result['patterns_found']}\n"
                 f"➕ Добавлено: {result['created']}\n"
-                f"🔄 Обновлено: {result['updated']}",
+                f"🔄 Обновлено: {result['updated']}\n"
+                f"👨‍🏫 Преподавателей: {result.get('teachers_created', 0)}",
                 reply_markup=get_main_keyboard()
             )
         else:
