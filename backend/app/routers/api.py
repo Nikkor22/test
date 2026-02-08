@@ -17,6 +17,7 @@ from app.models import (
 from app.services.reminder_service import ReminderService
 from app.services.gpt_service import GPTService
 from app.services.ical_sync_service import ICalSyncService
+from app.services.course_import_service import CourseImportService
 
 router = APIRouter(prefix="/api", tags=["api"])
 gpt_service = GPTService()
@@ -1822,3 +1823,49 @@ async def create_deadline_with_work(
         has_generated_work=True,
         generated_work_status="pending"
     )
+
+
+# ============= Course Import =============
+
+class CourseImportRequest(BaseModel):
+    path: str  # Path to course or root folder
+    import_all: bool = False  # If True, import all courses in folder
+
+
+class CourseImportResponse(BaseModel):
+    success: bool
+    courses_imported: Optional[int] = None
+    subjects_created: int = 0
+    deadlines_created: int = 0
+    materials_imported: int = 0
+    errors: List[str] = []
+
+
+@router.post("/import/course", response_model=CourseImportResponse)
+async def import_course(
+    data: CourseImportRequest,
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Import course materials from folder structure.
+
+    Folder structure:
+    ```
+    Курс/
+        └── Секция (Лекции/Практики/...)/
+            └── Название задания/
+                ├── _info.txt      ← Dates, description
+                ├── _task.json     ← JSON data
+                └── файлы...
+    ```
+    """
+    user = await get_user_by_telegram_id(telegram_id, session)
+    import_service = CourseImportService(session)
+
+    if data.import_all:
+        result = await import_service.import_all_courses(user.id, data.path)
+    else:
+        result = await import_service.import_course(user.id, data.path)
+
+    return CourseImportResponse(**result)
