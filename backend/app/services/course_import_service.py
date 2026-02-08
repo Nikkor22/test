@@ -1,6 +1,6 @@
 """
 Course Import Service
-Imports course materials from folder structure:
+Imports course materials from folder structure or ZIP archive:
 Курс/
     └── Секция (Лекции/Практики/...)/
         └── Название задания/
@@ -12,9 +12,11 @@ import os
 import json
 import re
 import shutil
+import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, BinaryIO
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +26,7 @@ from app.config import get_settings
 
 settings = get_settings()
 MATERIALS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "materials")
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 
 
 class CourseImportService:
@@ -50,6 +53,81 @@ class CourseImportService:
     def __init__(self, session: AsyncSession):
         self.session = session
         os.makedirs(MATERIALS_DIR, exist_ok=True)
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    async def import_from_zip(self, user_id: int, zip_file: BinaryIO, filename: str) -> dict:
+        """
+        Import courses from a ZIP archive.
+
+        Args:
+            user_id: Database user ID
+            zip_file: File-like object containing ZIP data
+            filename: Original filename for logging
+
+        Returns:
+            Import statistics
+        """
+        temp_dir = None
+        try:
+            # Create temp directory for extraction
+            temp_dir = tempfile.mkdtemp(prefix="course_import_")
+
+            # Save and extract ZIP
+            zip_path = os.path.join(temp_dir, "upload.zip")
+            with open(zip_path, 'wb') as f:
+                content = zip_file.read()
+                f.write(content)
+
+            # Extract ZIP
+            extract_dir = os.path.join(temp_dir, "extracted")
+            os.makedirs(extract_dir, exist_ok=True)
+
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                # Check for zip bombs (limit total size)
+                total_size = sum(info.file_size for info in zf.infolist())
+                if total_size > 500 * 1024 * 1024:  # 500MB limit
+                    return {"success": False, "error": "Archive too large (max 500MB)"}
+
+                zf.extractall(extract_dir)
+
+            # Find the root course folder(s)
+            # Handle cases where ZIP contains single folder or multiple folders
+            extracted_items = list(Path(extract_dir).iterdir())
+
+            # Filter out hidden files/folders
+            extracted_items = [p for p in extracted_items if not p.name.startswith('.')]
+
+            if len(extracted_items) == 1 and extracted_items[0].is_dir():
+                # Single folder in ZIP - could be one course or container with courses
+                root = extracted_items[0]
+                subfolders = [p for p in root.iterdir() if p.is_dir() and not p.name.startswith('.')]
+
+                # Check if subfolders look like sections (Лекции, Практики, etc.)
+                looks_like_sections = any(
+                    self._detect_work_type(sf.name) != "homework"
+                    for sf in subfolders
+                )
+
+                if looks_like_sections:
+                    # It's a single course
+                    result = await self.import_course(user_id, str(root))
+                else:
+                    # It's a container with multiple courses
+                    result = await self.import_all_courses(user_id, str(root))
+            else:
+                # Multiple items - treat extract_dir as root
+                result = await self.import_all_courses(user_id, extract_dir)
+
+            return result
+
+        except zipfile.BadZipFile:
+            return {"success": False, "error": "Invalid ZIP file"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        finally:
+            # Cleanup temp directory
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     async def import_course(self, user_id: int, course_path: str) -> dict:
         """

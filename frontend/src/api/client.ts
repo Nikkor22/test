@@ -256,4 +256,26 @@ export const deadlinesWithWorksApi = {
     api.post<DeadlineWithWork>('/api/deadlines-with-work', data),
 };
 
+// Course Import Response
+export interface CourseImportResult {
+  success: boolean;
+  courses_imported?: number;
+  subjects_created: number;
+  deadlines_created: number;
+  materials_imported: number;
+  errors: string[];
+}
+
+// Course Import API
+export const importApi = {
+  uploadZip: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<CourseImportResult>('/api/import/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000, // 2 minute timeout for large files
+    });
+  },
+};
+
 export default api;

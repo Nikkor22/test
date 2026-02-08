@@ -4,10 +4,12 @@ import {
   settingsApi,
   templatesApi,
   worksApi,
+  importApi,
   ReminderSettings,
   TitleTemplate,
   GeneratedWork,
   UserWorkSettings,
+  CourseImportResult,
 } from '../api/client';
 
 const WORK_TYPE_LABELS: Record<string, string> = {
@@ -39,7 +41,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 function SettingsPage() {
-  const [activeSection, setActiveSection] = useState<'reminders' | 'works' | 'templates'>('works');
+  const [activeSection, setActiveSection] = useState<'reminders' | 'works' | 'templates' | 'import'>('works');
   const [reminderSettings, setReminderSettings] = useState<ReminderSettings>({
     hours_before: [72, 24, 12],
     is_enabled: true,
@@ -57,7 +59,10 @@ function SettingsPage() {
   const [customHours, setCustomHours] = useState('');
   const [templateName, setTemplateName] = useState('');
   const [generatingWorkId, setGeneratingWorkId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<CourseImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const fetchData = async () => {
     try {
@@ -202,6 +207,39 @@ function SettingsPage() {
     }
   };
 
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
+    const file = e.target.files[0];
+
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      window.Telegram?.WebApp?.showAlert?.('Поддерживаются только ZIP-архивы');
+      return;
+    }
+
+    setImporting(true);
+    setImportResult(null);
+
+    try {
+      const result = await importApi.uploadZip(file);
+      setImportResult(result.data);
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+    } catch (error: unknown) {
+      console.error('Error importing:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Ошибка импорта';
+      setImportResult({
+        success: false,
+        subjects_created: 0,
+        deadlines_created: 0,
+        materials_imported: 0,
+        errors: [errorMessage],
+      });
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error');
+    } finally {
+      setImporting(false);
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  };
+
   if (loading) {
     return (
       <div className="loading">
@@ -217,7 +255,7 @@ function SettingsPage() {
       </div>
 
       {/* Section Tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <button
           className={`btn btn-sm ${activeSection === 'works' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setActiveSection('works')}
@@ -235,6 +273,12 @@ function SettingsPage() {
           onClick={() => setActiveSection('reminders')}
         >
           ⏰ Напоминания
+        </button>
+        <button
+          className={`btn btn-sm ${activeSection === 'import' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveSection('import')}
+        >
+          📦 Импорт
         </button>
       </div>
 
@@ -576,6 +620,105 @@ function SettingsPage() {
                 })}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Section */}
+      {activeSection === 'import' && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">📦 Импорт курсов</div>
+          </div>
+
+          <div className="card-body">
+            <p style={{ marginBottom: 16, fontSize: 13, color: 'var(--text-secondary)' }}>
+              Загрузите ZIP-архив с материалами курса. Структура папок:
+            </p>
+
+            <pre style={{
+              background: 'var(--bg-secondary)',
+              padding: 12,
+              borderRadius: 8,
+              fontSize: 11,
+              marginBottom: 16,
+              overflowX: 'auto',
+            }}>
+{`Курс/
+  └── Секция (Лекции/Практики/ЛАБ)/
+      └── Задание/
+          ├── _info.txt (даты, описание)
+          ├── _task.json (JSON)
+          └── файлы...`}
+            </pre>
+
+            <p style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+              Формат <code>_info.txt</code>:
+            </p>
+            <pre style={{
+              background: 'var(--bg-secondary)',
+              padding: 8,
+              borderRadius: 6,
+              fontSize: 11,
+              marginBottom: 16,
+            }}>
+{`Дата: 2024-03-15
+Описание: Выполнить задачи 1-5
+Преподаватель: Иванов И.И.`}
+            </pre>
+
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".zip"
+              style={{ display: 'none' }}
+              onChange={handleImport}
+            />
+
+            <button
+              className="btn btn-primary"
+              onClick={() => importFileRef.current?.click()}
+              disabled={importing}
+              style={{ width: '100%', marginBottom: 16 }}
+            >
+              {importing ? '⏳ Импорт...' : '📤 Загрузить ZIP-архив'}
+            </button>
+
+            {/* Import Results */}
+            {importResult && (
+              <div style={{
+                padding: 12,
+                borderRadius: 8,
+                background: importResult.success ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                border: `1px solid ${importResult.success ? '#22c55e' : '#ef4444'}`,
+              }}>
+                <div style={{ fontWeight: 500, marginBottom: 8, color: importResult.success ? '#22c55e' : '#ef4444' }}>
+                  {importResult.success ? '✅ Импорт завершён' : '❌ Ошибка импорта'}
+                </div>
+
+                {importResult.success && (
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                    {importResult.courses_imported !== undefined && (
+                      <div>📚 Курсов: {importResult.courses_imported}</div>
+                    )}
+                    <div>📖 Предметов: {importResult.subjects_created}</div>
+                    <div>📅 Дедлайнов: {importResult.deadlines_created}</div>
+                    <div>📎 Материалов: {importResult.materials_imported}</div>
+                  </div>
+                )}
+
+                {importResult.errors.length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#ef4444' }}>
+                    {importResult.errors.slice(0, 5).map((err, i) => (
+                      <div key={i}>• {err}</div>
+                    ))}
+                    {importResult.errors.length > 5 && (
+                      <div>... и ещё {importResult.errors.length - 5}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

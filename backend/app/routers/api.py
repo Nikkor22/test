@@ -1869,3 +1869,41 @@ async def import_course(
         result = await import_service.import_course(user.id, data.path)
 
     return CourseImportResponse(**result)
+
+
+@router.post("/import/upload", response_model=CourseImportResponse)
+async def import_course_zip(
+    file: UploadFile = File(...),
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Import course materials from ZIP archive.
+
+    Upload a ZIP file containing course folder structure:
+    ```
+    Курс/
+        └── Секция (Лекции/Практики/...)/
+            └── Название задания/
+                ├── _info.txt      ← Dates, description
+                ├── _task.json     ← JSON data
+                └── файлы...
+    ```
+
+    The ZIP can contain:
+    - A single course folder
+    - Multiple course folders
+    - A root folder containing multiple courses
+    """
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=400, detail="Only ZIP files are allowed")
+
+    user = await get_user_by_telegram_id(telegram_id, session)
+    import_service = CourseImportService(session)
+
+    result = await import_service.import_from_zip(user.id, file.file, file.filename)
+
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Import failed"))
+
+    return CourseImportResponse(**result)
