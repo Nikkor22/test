@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { format, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import {
@@ -43,9 +43,9 @@ function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch subjects on mount
-  useState(() => {
+  useEffect(() => {
     subjectsApi.getAll().then((res) => setSubjects(res.data));
-  });
+  }, []);
 
   const analyzeFiles = async (fileList: File[]) => {
     if (fileList.length === 0) return;
