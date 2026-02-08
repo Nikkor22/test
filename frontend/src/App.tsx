@@ -4,8 +4,9 @@ import SchedulePage from './pages/SchedulePage';
 import SubjectsPage from './pages/SubjectsPage';
 import TeachersPage from './pages/TeachersPage';
 import SettingsPage from './pages/SettingsPage';
+import UploadPage from './pages/UploadPage';
 
-type Tab = 'schedule' | 'subjects' | 'teachers' | 'settings';
+type Tab = 'schedule' | 'subjects' | 'upload' | 'teachers' | 'settings';
 
 function App() {
   const navigate = useNavigate();
@@ -25,6 +26,8 @@ function App() {
     const path = location.pathname;
     if (path.includes('subjects')) {
       setActiveTab('subjects');
+    } else if (path.includes('upload')) {
+      setActiveTab('upload');
     } else if (path.includes('teachers')) {
       setActiveTab('teachers');
     } else if (path.includes('settings')) {
@@ -39,6 +42,7 @@ function App() {
     const routes: Record<Tab, string> = {
       schedule: '/',
       subjects: '/subjects',
+      upload: '/upload',
       teachers: '/teachers',
       settings: '/settings',
     };
@@ -67,6 +71,13 @@ function App() {
           Предметы
         </button>
         <button
+          className={`nav-item ${activeTab === 'upload' ? 'active' : ''}`}
+          onClick={() => handleTabChange('upload')}
+        >
+          <span>📤</span>
+          Загрузка
+        </button>
+        <button
           className={`nav-item ${activeTab === 'teachers' ? 'active' : ''}`}
           onClick={() => handleTabChange('teachers')}
         >
@@ -86,6 +97,7 @@ function App() {
         <Routes>
           <Route path="/" element={<SchedulePage />} />
           <Route path="/subjects" element={<SubjectsPage />} />
+          <Route path="/upload" element={<UploadPage />} />
           <Route path="/teachers" element={<TeachersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

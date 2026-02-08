@@ -18,6 +18,7 @@ from app.services.reminder_service import ReminderService
 from app.services.gpt_service import GPTService
 from app.services.ical_sync_service import ICalSyncService
 from app.services.course_import_service import CourseImportService
+from app.services.smart_upload_service import SmartUploadService
 
 router = APIRouter(prefix="/api", tags=["api"])
 gpt_service = GPTService()
@@ -1907,3 +1908,128 @@ async def import_course_zip(
         raise HTTPException(status_code=400, detail=result.get("error", "Import failed"))
 
     return CourseImportResponse(**result)
+
+
+# ============= Smart Upload =============
+
+class FileAnalysis(BaseModel):
+    original_filename: str
+    detected_subject: Optional[str] = None
+    detected_work_type: Optional[str] = None
+    detected_work_number: Optional[int] = None
+    detected_deadline: Optional[str] = None
+    suggested_title: str
+    confidence: float
+
+
+class AnalyzeFilesRequest(BaseModel):
+    filenames: List[str]
+
+
+class AnalyzeFilesResponse(BaseModel):
+    files: List[FileAnalysis]
+    common_subject: Optional[str] = None
+    common_work_type: Optional[str] = None
+    suggested_deadline: Optional[str] = None
+    total_files: int
+
+
+class QuickUploadResponse(BaseModel):
+    success: bool
+    subject_id: Optional[int] = None
+    subject_name: Optional[str] = None
+    deadline_id: Optional[int] = None
+    deadline_title: Optional[str] = None
+    deadline_date: Optional[str] = None
+    materials_saved: int = 0
+    error: Optional[str] = None
+
+
+@router.post("/upload/analyze", response_model=AnalyzeFilesResponse)
+async def analyze_filenames(data: AnalyzeFilesRequest):
+    """
+    Analyze filenames and detect metadata.
+    Use this before upload to preview what will be detected.
+    """
+    from app.services.smart_upload_service import SmartUploadService
+
+    # Create a temporary service just for analysis (no DB needed)
+    class MockSession:
+        pass
+
+    service = SmartUploadService(MockSession())  # type: ignore
+    result = service.analyze_multiple(data.filenames)
+
+    return AnalyzeFilesResponse(
+        files=[FileAnalysis(**f) for f in result["files"]],
+        common_subject=result["common_subject"],
+        common_work_type=result["common_work_type"],
+        suggested_deadline=result["suggested_deadline"],
+        total_files=result["total_files"],
+    )
+
+
+@router.post("/upload/quick", response_model=QuickUploadResponse)
+async def quick_upload(
+    files: List[UploadFile] = File(...),
+    subject_name: Optional[str] = Query(None),
+    work_type: Optional[str] = Query(None),
+    work_number: Optional[int] = Query(None),
+    title: Optional[str] = Query(None),
+    deadline_date: Optional[str] = Query(None),
+    description: Optional[str] = Query(None),
+    telegram_id: int = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Quick upload files with optional metadata.
+    If metadata not provided, auto-detect from filenames.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    user = await get_user_by_telegram_id(telegram_id, session)
+    upload_service = SmartUploadService(session)
+
+    # Read file contents
+    file_data = []
+    for f in files:
+        content = await f.read()
+        file_type = f.filename.split('.')[-1].lower() if f.filename else 'unknown'
+        file_data.append((f.filename or 'file', content, file_type))
+
+    # Parse deadline date if provided
+    parsed_deadline = None
+    if deadline_date:
+        try:
+            parsed_deadline = datetime.fromisoformat(deadline_date.replace('Z', '+00:00'))
+        except ValueError:
+            pass
+
+    result = await upload_service.quick_upload(
+        user_id=user.id,
+        files=file_data,
+        subject_name=subject_name,
+        work_type=work_type,
+        work_number=work_number,
+        title=title,
+        deadline_date=parsed_deadline,
+        description=description,
+    )
+
+    if not result["success"]:
+        return QuickUploadResponse(
+            success=False,
+            error=result.get("error"),
+            materials_saved=0,
+        )
+
+    return QuickUploadResponse(
+        success=True,
+        subject_id=result["subject_id"],
+        subject_name=result["subject_name"],
+        deadline_id=result["deadline_id"],
+        deadline_title=result["deadline_title"],
+        deadline_date=result["deadline_date"],
+        materials_saved=result["materials_saved"],
+    )

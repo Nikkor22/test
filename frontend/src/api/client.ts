@@ -278,4 +278,60 @@ export const importApi = {
   },
 };
 
+// Smart Upload Types
+export interface FileAnalysis {
+  original_filename: string;
+  detected_subject: string | null;
+  detected_work_type: string | null;
+  detected_work_number: number | null;
+  detected_deadline: string | null;
+  suggested_title: string;
+  confidence: number;
+}
+
+export interface AnalyzeFilesResponse {
+  files: FileAnalysis[];
+  common_subject: string | null;
+  common_work_type: string | null;
+  suggested_deadline: string | null;
+  total_files: number;
+}
+
+export interface QuickUploadResponse {
+  success: boolean;
+  subject_id?: number;
+  subject_name?: string;
+  deadline_id?: number;
+  deadline_title?: string;
+  deadline_date?: string;
+  materials_saved: number;
+  error?: string;
+}
+
+// Smart Upload API
+export const uploadApi = {
+  analyze: (filenames: string[]) =>
+    api.post<AnalyzeFilesResponse>('/api/upload/analyze', { filenames }),
+
+  quick: (
+    files: File[],
+    options?: {
+      subject_name?: string;
+      work_type?: string;
+      work_number?: number;
+      title?: string;
+      deadline_date?: string;
+      description?: string;
+    }
+  ) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append('files', file));
+    return api.post<QuickUploadResponse>('/api/upload/quick', formData, {
+      params: options,
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
+  },
+};
+
 export default api;
