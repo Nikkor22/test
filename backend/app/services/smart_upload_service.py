@@ -215,7 +215,6 @@ class SmartUploadService:
 
         # Use provided values or fall back to detected
         final_subject = subject_name or analysis["common_subject"]
-        final_work_type = work_type or analysis["common_work_type"] or "homework"
         final_deadline = deadline_date
 
         if not final_deadline:
@@ -235,7 +234,34 @@ class SmartUploadService:
         # Get or create subject
         subject = await self._get_or_create_subject(user_id, final_subject)
 
-        # Create deadline
+        # Save materials directory
+        subject_dir = os.path.join(MATERIALS_DIR, str(subject.id))
+        os.makedirs(subject_dir, exist_ok=True)
+
+        # If user specified work_type, use single deadline mode
+        if work_type:
+            return await self._single_deadline_upload(
+                subject, files, analysis, work_type, work_number, title, final_deadline, description, subject_dir
+            )
+
+        # Smart mode: group files by detected work type and create separate deadlines
+        return await self._smart_grouped_upload(
+            subject, files, analysis, final_deadline, description, subject_dir
+        )
+
+    async def _single_deadline_upload(
+        self,
+        subject: Subject,
+        files: List[Tuple[str, bytes, str]],
+        analysis: dict,
+        work_type: str,
+        work_number: Optional[int],
+        title: Optional[str],
+        deadline_date: datetime,
+        description: Optional[str],
+        subject_dir: str,
+    ) -> dict:
+        """Upload all files under a single deadline."""
         final_title = title
         if not final_title:
             if work_number:
@@ -245,7 +271,7 @@ class SmartUploadService:
                     'homework': 'Домашнее задание',
                     'test': 'Контрольная работа',
                 }
-                label = work_labels.get(final_work_type, final_work_type)
+                label = work_labels.get(work_type, work_type)
                 final_title = f"{label} №{work_number}"
             else:
                 final_title = analysis["files"][0]["suggested_title"] if analysis["files"] else "Задание"
@@ -253,45 +279,15 @@ class SmartUploadService:
         deadline = Deadline(
             subject_id=subject.id,
             title=final_title,
-            work_type=final_work_type,
+            work_type=work_type,
             work_number=work_number,
             description=description or "",
-            deadline_date=final_deadline,
+            deadline_date=deadline_date,
         )
         self.session.add(deadline)
         await self.session.flush()
 
-        # Save materials
-        materials_saved = 0
-        subject_dir = os.path.join(MATERIALS_DIR, str(subject.id))
-        os.makedirs(subject_dir, exist_ok=True)
-
-        for filename, content, file_type in files:
-            try:
-                # Generate unique filename
-                dest_path = os.path.join(subject_dir, filename)
-                counter = 1
-                base_name, ext = os.path.splitext(filename)
-                while os.path.exists(dest_path):
-                    dest_path = os.path.join(subject_dir, f"{base_name}_{counter}{ext}")
-                    counter += 1
-
-                # Save file
-                with open(dest_path, 'wb') as f:
-                    f.write(content)
-
-                # Create material record
-                material = Material(
-                    subject_id=subject.id,
-                    file_name=os.path.basename(dest_path),
-                    file_type=file_type,
-                    file_path=dest_path,
-                )
-                self.session.add(material)
-                materials_saved += 1
-            except Exception as e:
-                print(f"Error saving file {filename}: {e}")
-
+        materials_saved = await self._save_files(subject.id, files, subject_dir)
         await self.session.commit()
 
         return {
@@ -302,8 +298,148 @@ class SmartUploadService:
             "deadline_title": deadline.title,
             "deadline_date": deadline.deadline_date.isoformat(),
             "materials_saved": materials_saved,
+            "deadlines_created": 1,
             "analysis": analysis,
         }
+
+    async def _smart_grouped_upload(
+        self,
+        subject: Subject,
+        files: List[Tuple[str, bytes, str]],
+        analysis: dict,
+        deadline_date: datetime,
+        description: Optional[str],
+        subject_dir: str,
+    ) -> dict:
+        """
+        Smart upload: group files by detected work type and number,
+        create separate deadlines for each group.
+        """
+        # Group files by (work_type, work_number)
+        groups: dict[tuple, List[Tuple[str, bytes, str, dict]]] = {}
+
+        for i, (filename, content, file_type) in enumerate(files):
+            file_analysis = analysis["files"][i] if i < len(analysis["files"]) else self.analyze_filename(filename)
+
+            work_type = file_analysis.get("detected_work_type") or "homework"
+            work_number = file_analysis.get("detected_work_number")
+
+            key = (work_type, work_number)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append((filename, content, file_type, file_analysis))
+
+        # Create deadlines for each group
+        deadlines_created = 0
+        materials_saved = 0
+        created_deadlines = []
+
+        work_labels = {
+            'lab': 'Лабораторная работа',
+            'practical': 'Практическая работа',
+            'homework': 'Домашнее задание',
+            'test': 'Контрольная работа',
+            'lecture': 'Лекция',
+            'coursework': 'Курсовая работа',
+            'report': 'Реферат',
+            'presentation': 'Презентация',
+        }
+
+        for (work_type, work_number), group_files in groups.items():
+            # Generate title
+            label = work_labels.get(work_type, work_type)
+            if work_number:
+                title = f"{label} №{work_number}"
+            else:
+                # Use suggested title from first file or generic
+                first_analysis = group_files[0][3]
+                title = first_analysis.get("suggested_title") or label
+
+            # Check if deadline already exists
+            existing = await self.session.execute(
+                select(Deadline).where(
+                    Deadline.subject_id == subject.id,
+                    Deadline.work_type == work_type,
+                    Deadline.work_number == work_number if work_number else True,
+                    Deadline.title == title,
+                )
+            )
+            deadline = existing.scalar_one_or_none()
+
+            if not deadline:
+                deadline = Deadline(
+                    subject_id=subject.id,
+                    title=title,
+                    work_type=work_type,
+                    work_number=work_number,
+                    description=description or "",
+                    deadline_date=deadline_date,
+                )
+                self.session.add(deadline)
+                await self.session.flush()
+                deadlines_created += 1
+
+            created_deadlines.append({
+                "title": title,
+                "work_type": work_type,
+                "work_number": work_number,
+                "files_count": len(group_files),
+            })
+
+            # Save files
+            for filename, content, file_type, _ in group_files:
+                saved = await self._save_single_file(subject.id, filename, content, file_type, subject_dir)
+                if saved:
+                    materials_saved += 1
+
+        await self.session.commit()
+
+        return {
+            "success": True,
+            "subject_id": subject.id,
+            "subject_name": subject.name,
+            "materials_saved": materials_saved,
+            "deadlines_created": deadlines_created,
+            "created_deadlines": created_deadlines,
+            "analysis": analysis,
+        }
+
+    async def _save_files(
+        self, subject_id: int, files: List[Tuple[str, bytes, str]], subject_dir: str
+    ) -> int:
+        """Save multiple files and return count of saved."""
+        saved = 0
+        for filename, content, file_type in files:
+            if await self._save_single_file(subject_id, filename, content, file_type, subject_dir):
+                saved += 1
+        return saved
+
+    async def _save_single_file(
+        self, subject_id: int, filename: str, content: bytes, file_type: str, subject_dir: str
+    ) -> bool:
+        """Save a single file. Returns True if successful."""
+        try:
+            dest_path = os.path.join(subject_dir, filename)
+            counter = 1
+            base_name, ext = os.path.splitext(filename)
+            while os.path.exists(dest_path):
+                dest_path = os.path.join(subject_dir, f"{base_name}_{counter}{ext}")
+                counter += 1
+
+            with open(dest_path, 'wb') as f:
+                f.write(content)
+
+            material = Material(
+                subject_id=subject_id,
+                file_name=os.path.basename(dest_path),
+                file_type=file_type,
+                file_path=dest_path,
+            )
+            self.session.add(material)
+            return True
+        except Exception as e:
+            print(f"Error saving file {filename}: {e}")
+            return False
 
     async def _get_or_create_subject(self, user_id: int, name: str) -> Subject:
         """Get existing subject or create new one."""

@@ -297,6 +297,13 @@ export interface AnalyzeFilesResponse {
   total_files: number;
 }
 
+export interface CreatedDeadline {
+  title: string;
+  work_type: string;
+  work_number: number | null;
+  files_count: number;
+}
+
 export interface QuickUploadResponse {
   success: boolean;
   subject_id?: number;
@@ -305,6 +312,8 @@ export interface QuickUploadResponse {
   deadline_title?: string;
   deadline_date?: string;
   materials_saved: number;
+  deadlines_created?: number;
+  created_deadlines?: CreatedDeadline[];
   error?: string;
 }
 

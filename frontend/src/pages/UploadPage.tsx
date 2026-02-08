@@ -10,6 +10,7 @@ import {
 } from '../api/client';
 
 const WORK_TYPE_LABELS: Record<string, string> = {
+  auto: 'Автоопределение',
   homework: 'Домашнее задание',
   lab: 'Лабораторная',
   practical: 'Практическая',
@@ -32,7 +33,7 @@ function UploadPage() {
   // Form state
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [newSubject, setNewSubject] = useState('');
-  const [workType, setWorkType] = useState('homework');
+  const [workType, setWorkType] = useState('auto');
   const [workNumber, setWorkNumber] = useState<string>('');
   const [title, setTitle] = useState('');
   const [deadlineDate, setDeadlineDate] = useState(
@@ -138,11 +139,12 @@ function UploadPage() {
     setResult(null);
 
     try {
+      // If workType is 'auto', don't pass it - let backend auto-group by detected types
       const res = await uploadApi.quick(files, {
         subject_name: subjectName,
-        work_type: workType,
-        work_number: workNumber ? parseInt(workNumber) : undefined,
-        title: title || undefined,
+        work_type: workType === 'auto' ? undefined : workType,
+        work_number: workType === 'auto' ? undefined : (workNumber ? parseInt(workNumber) : undefined),
+        title: workType === 'auto' ? undefined : (title || undefined),
         deadline_date: deadlineDate,
         description: description || undefined,
       });
@@ -364,37 +366,44 @@ function UploadPage() {
                   </option>
                 ))}
               </select>
+              {workType === 'auto' && (
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Система автоматически определит тип каждого файла и создаст отдельные задания
+                </div>
+              )}
             </div>
 
-            {/* Work Number & Title */}
-            <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-              <div style={{ width: 80 }}>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 500 }}>
-                  №
-                </label>
-                <input
-                  type="number"
-                  className="form-input"
-                  value={workNumber}
-                  onChange={(e) => setWorkNumber(e.target.value)}
-                  placeholder="1"
-                  style={{ width: '100%' }}
-                />
+            {/* Work Number & Title - only show if not auto mode */}
+            {workType !== 'auto' && (
+              <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+                <div style={{ width: 80 }}>
+                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 500 }}>
+                    №
+                  </label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={workNumber}
+                    onChange={(e) => setWorkNumber(e.target.value)}
+                    placeholder="1"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 500 }}>
+                    Название
+                  </label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Автоматически"
+                    style={{ width: '100%' }}
+                  />
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 500 }}>
-                  Название
-                </label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Автоматически"
-                  style={{ width: '100%' }}
-                />
-              </div>
-            </div>
+            )}
 
             {/* Deadline */}
             <div style={{ marginBottom: 16 }}>
@@ -460,15 +469,53 @@ function UploadPage() {
 
             {result.success && (
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                <div>📖 Предмет: {result.subject_name}</div>
-                <div>📝 Задание: {result.deadline_title}</div>
-                <div>
-                  📅 Дедлайн:{' '}
-                  {result.deadline_date
-                    ? format(new Date(result.deadline_date), 'd MMMM yyyy', { locale: ru })
-                    : '—'}
-                </div>
+                <div style={{ marginBottom: 8 }}>📖 Предмет: <strong>{result.subject_name}</strong></div>
                 <div>📎 Файлов загружено: {result.materials_saved}</div>
+                {result.deadlines_created !== undefined && (
+                  <div>📝 Заданий создано: {result.deadlines_created}</div>
+                )}
+
+                {/* Show created deadlines grouped by type */}
+                {result.created_deadlines && result.created_deadlines.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 6 }}>Созданные задания:</div>
+                    {result.created_deadlines.map((dl, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          padding: '6px 10px',
+                          background: 'var(--bg-secondary)',
+                          borderRadius: 6,
+                          marginBottom: 4,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <span>
+                          {WORK_TYPE_LABELS[dl.work_type] || dl.work_type}
+                          {dl.work_number && ` №${dl.work_number}`}
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          {dl.files_count} файл(ов)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Single deadline mode */}
+                {result.deadline_title && !result.created_deadlines && (
+                  <>
+                    <div>📝 Задание: {result.deadline_title}</div>
+                    <div>
+                      📅 Дедлайн:{' '}
+                      {result.deadline_date
+                        ? format(new Date(result.deadline_date), 'd MMMM yyyy', { locale: ru })
+                        : '—'}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
